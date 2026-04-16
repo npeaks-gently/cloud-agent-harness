@@ -147,8 +147,11 @@ export class CahSlackWebhook extends Construct {
       timeout: cdk.Duration.seconds(10),
       memorySize: 256,
       bundling: {
+        format: cdk.aws_lambda_nodejs.OutputFormat.ESM,
+        mainFields: ['module', 'main'],
         externalModules: ['@aws-sdk/*'],
         sourceMap: true,
+        banner: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);",
       },
       role,
       vpc: props.vpc,
