@@ -75,7 +75,7 @@ export async function upsertAgentRun(
   const sql = `
     INSERT INTO agent_runs (id, pipeline_run_id, phase, plan_name, wave, status, started_at, task_key)
     VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, NOW(), $6)
-    ON CONFLICT (task_key) DO UPDATE SET
+    ON CONFLICT (task_key) WHERE task_key IS NOT NULL DO UPDATE SET
       status = EXCLUDED.status,
       started_at = CASE
         WHEN agent_runs.status IN ('completed', 'failed') THEN agent_runs.started_at

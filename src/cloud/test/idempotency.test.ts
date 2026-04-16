@@ -62,7 +62,7 @@ describe('idempotency', () => {
 
       expect(mockQuery).toHaveBeenCalledOnce();
       const [sql] = mockQuery.mock.calls[0];
-      expect(sql).toContain('ON CONFLICT (task_key) DO UPDATE');
+      expect(sql).toContain('ON CONFLICT (task_key) WHERE task_key IS NOT NULL DO UPDATE');
     });
 
     it('passes 6 parameters in correct order', async () => {
