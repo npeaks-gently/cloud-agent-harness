@@ -44,33 +44,42 @@ export async function downloadPlanningDir(
   const s3 = client ?? new S3Client({ region: DEFAULT_REGION });
   const prefix = `runs/${runId}/planning/`;
 
-  const response = await s3.send(
-    new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix }),
-  );
-
-  if (!response.Contents) return 0;
-
+  let continuationToken: string | undefined;
   let count = 0;
-  for (const obj of response.Contents) {
-    const key = obj.Key;
-    if (!key || key.length <= prefix.length) continue;
 
-    const relativePath = key.slice(prefix.length);
-    const fullPath = join(targetDir, '.planning', relativePath);
-
-    // Create intermediate directories
-    await mkdir(dirname(fullPath), { recursive: true });
-
-    const getResponse = await s3.send(
-      new GetObjectCommand({ Bucket: bucket, Key: key }),
+  do {
+    const response = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      }),
     );
 
-    if (!getResponse.Body) continue;
+    for (const obj of response.Contents ?? []) {
+      const key = obj.Key;
+      if (!key || key.length <= prefix.length) continue;
 
-    const bytes = await getResponse.Body.transformToByteArray();
-    await writeFile(fullPath, Buffer.from(bytes));
-    count++;
-  }
+      const relativePath = key.slice(prefix.length);
+      const fullPath = join(targetDir, '.planning', relativePath);
+
+      const getResponse = await s3.send(
+        new GetObjectCommand({ Bucket: bucket, Key: key }),
+      );
+
+      if (!getResponse.Body) continue;
+
+      // Only create directories when we know we'll write the file (WR-05)
+      await mkdir(dirname(fullPath), { recursive: true });
+      const bytes = await getResponse.Body.transformToByteArray();
+      await writeFile(fullPath, Buffer.from(bytes));
+      count++;
+    }
+
+    continuationToken = response.IsTruncated
+      ? response.NextContinuationToken
+      : undefined;
+  } while (continuationToken);
 
   return count;
 }
