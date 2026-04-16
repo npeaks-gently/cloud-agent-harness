@@ -174,7 +174,6 @@ export class CahPipelineLambda extends Construct {
       code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/stage-router')),
       timeout: cdk.Duration.seconds(900),
       memorySize: 512,
-      reservedConcurrentExecutions: 10,
       role,
       vpc: props.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },

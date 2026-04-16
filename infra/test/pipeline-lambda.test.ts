@@ -35,10 +35,14 @@ describe('Pipeline Lambda Configuration', () => {
     });
   });
 
-  it('creates Lambda function with reserved concurrency of 10', () => {
-    template.hasResourceProperties('AWS::Lambda::Function', {
-      ReservedConcurrentExecutions: 10,
+  it('creates Lambda function without reserved concurrency (dev account)', () => {
+    const functions = template.findResources('AWS::Lambda::Function', {
+      Properties: Match.objectLike({ FunctionName: 'cah-dev-stage-router' }),
     });
+    for (const [, fn] of Object.entries(functions)) {
+      const props = fn.Properties as Record<string, unknown>;
+      expect(props).not.toHaveProperty('ReservedConcurrentExecutions');
+    }
   });
 });
 
