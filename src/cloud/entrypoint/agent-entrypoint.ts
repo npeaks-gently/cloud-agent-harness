@@ -18,6 +18,7 @@ import { S3Client } from '@aws-sdk/client-s3';
 import { execSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { track, flush } from '../analytics.js';
 import { downloadPlanningDir, uploadModifiedFiles } from './s3-sync.js';
 import { loadSdk } from './sdk-loader.js';
 
@@ -87,6 +88,96 @@ async function findModifiedFiles(
   return files;
 }
 
+// ─── Git operations ────────────────────────────────────────────────────────
+
+/**
+ * Configures git credentials using the CAH_GITHUB_TOKEN env var.
+ * Uses a credential helper to provide credentials without storing them in
+ * git config files (T-03-15).
+ *
+ * @param workDir - Working directory
+ * @param token - GitHub token for HTTPS authentication
+ */
+function configureGitAuth(workDir: string, token: string): void {
+  execSync(
+    `git config credential.helper '!f() { echo "password=${token}"; }; f'`,
+    { cwd: workDir, encoding: 'utf-8' },
+  );
+  execSync('git config user.email "cah-bot@cloud-agent-harness.dev"', {
+    cwd: workDir,
+    encoding: 'utf-8',
+  });
+  execSync('git config user.name "Cloud Agent Harness"', {
+    cwd: workDir,
+    encoding: 'utf-8',
+  });
+}
+
+/**
+ * Creates a task-specific branch for the current agent task.
+ * Branch name format: cah/{runId}/{phase}-{plan}-{wave} per D-06.
+ *
+ * Branch name components (runId=UUID, phase=numeric, plan=alphanumeric,
+ * wave=numeric) contain no user-controlled input (T-03-19).
+ *
+ * @param workDir - Working directory
+ * @param featureBranch - Feature branch to base off
+ * @param runId - Pipeline run ID
+ * @param phase - Phase number
+ * @param plan - Plan name
+ * @param wave - Wave number (defaults to '1')
+ * @returns The created branch name
+ */
+function createTaskBranch(
+  workDir: string,
+  featureBranch: string,
+  runId: string,
+  phase: string,
+  plan: string,
+  wave: string,
+): string {
+  const branchName = `cah/${runId}/${phase}-${plan}-${wave}`;
+  execSync(`git fetch origin ${featureBranch}`, {
+    cwd: workDir,
+    encoding: 'utf-8',
+  });
+  execSync(`git checkout -b ${branchName} origin/${featureBranch}`, {
+    cwd: workDir,
+    encoding: 'utf-8',
+  });
+  return branchName;
+}
+
+/**
+ * Commits all changes and pushes the task branch to remote.
+ *
+ * @param workDir - Working directory
+ * @param taskBranch - Branch name to push
+ * @param commitMessage - Commit message
+ */
+function commitAndPush(
+  workDir: string,
+  taskBranch: string,
+  commitMessage: string,
+): void {
+  execSync('git add -A', { cwd: workDir, encoding: 'utf-8' });
+  // Check if there are changes to commit
+  const status = execSync('git status --porcelain', {
+    cwd: workDir,
+    encoding: 'utf-8',
+  }).trim();
+  if (status.length > 0) {
+    execSync(`git commit -m "${commitMessage}"`, {
+      cwd: workDir,
+      encoding: 'utf-8',
+    });
+  }
+  execSync(`git push origin ${taskBranch}`, {
+    cwd: workDir,
+    encoding: 'utf-8',
+  });
+}
+
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 /**
@@ -104,6 +195,9 @@ export async function main(): Promise<void> {
   const phase = process.env.CAH_PHASE ?? '01';
   const plan = process.env.CAH_PLAN ?? '';
   const bucket = requireEnv('CAH_BUCKET');
+  const featureBranch = process.env.CAH_FEATURE_BRANCH ?? '';
+  const wave = process.env.CAH_WAVE ?? '1';
+  const githubToken = process.env.CAH_GITHUB_TOKEN ?? '';
   const startMs = Date.now();
 
   const s3 = new S3Client({ region: DEFAULT_REGION });
@@ -127,11 +221,39 @@ export async function main(): Promise<void> {
       break;
     }
     case 'execute': {
+      let taskBranch = '';
+
+      // Phase 3 D-06: Create task branch and configure git auth if feature branch is set
+      if (featureBranch && githubToken) {
+        configureGitAuth(WORK_DIR, githubToken);
+        taskBranch = createTaskBranch(WORK_DIR, featureBranch, runId, phase, plan, wave);
+      }
+
       const { GSD } = await loadSdk();
       const gsd = new GSD({ projectDir: WORK_DIR, autoMode: true });
       const result = await gsd.executePlan(plan);
       success = result.success;
       costUsd = result.totalCostUsd ?? 0;
+
+      // Phase 3 D-14 / INTG-04 SC-4: Track agent run completion with cost data
+      track('agent_run_completed', {
+        runId,
+        phase,
+        plan,
+        wave,
+        costUsd,
+        success,
+        projectId: process.env.CAH_PROJECT_ID ?? '',
+      });
+
+      // Phase 3 D-06: Commit and push task branch
+      if (taskBranch && success) {
+        commitAndPush(WORK_DIR, taskBranch, `feat(${phase}-${plan}): agent task execution`);
+      }
+
+      // Flush PostHog events before handler exit to prevent event loss in Lambda
+      await flush();
+
       break;
     }
     case 'approve':
