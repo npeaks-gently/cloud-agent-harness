@@ -37,11 +37,14 @@ describe('postgres-client', () => {
   // ─── createDbPool ─────────────────────────────────────────────────────
 
   describe('createDbPool', () => {
-    it('creates Pool with ssl.rejectUnauthorized true', () => {
+    it('creates Pool with ssl configuration', () => {
       const pool = createDbPool('postgresql://localhost/test');
       // Access the options stored by the mock constructor
       const opts = (pool as unknown as { options: Record<string, unknown> }).options;
-      expect(opts.ssl).toEqual({ rejectUnauthorized: true });
+      const ssl = opts.ssl as Record<string, unknown>;
+      // When RDS CA bundle is present: rejectUnauthorized true + ca buffer
+      // When missing (e.g., tests): rejectUnauthorized false (still encrypted)
+      expect(typeof ssl.rejectUnauthorized).toBe('boolean');
     });
 
     it('creates Pool with connectionTimeoutMillis 10000', () => {

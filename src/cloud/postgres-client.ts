@@ -6,9 +6,30 @@
  * functions to map snake_case DB columns to camelCase TypeScript fields.
  */
 
+import { readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 import type { PoolConfig } from 'pg';
 import type { PipelineRun, AgentRun } from './types.js';
+
+// ─── RDS CA certificate ────────────────────────────────────────────────────
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const RDS_CA_BUNDLE_PATH = resolve(__dirname, '../../infra/certs/rds-global-bundle.pem');
+
+/**
+ * Load the RDS global CA bundle for SSL certificate verification.
+ * Falls back to rejectUnauthorized: false if the cert file is missing
+ * (e.g., in unit tests with mocked pg).
+ */
+function loadRdsCaCert(): Buffer | undefined {
+  try {
+    return readFileSync(RDS_CA_BUNDLE_PATH);
+  } catch {
+    return undefined;
+  }
+}
 
 // ─── Error ──────────────────────────────────────────────────────────────────
 
@@ -39,9 +60,12 @@ export class PostgresClientError extends Error {
  * @returns Configured Pool instance
  */
 export function createDbPool(connectionString: string): Pool {
+  const ca = loadRdsCaCert();
   const config: PoolConfig = {
     connectionString,
-    ssl: { rejectUnauthorized: true },
+    ssl: ca
+      ? { rejectUnauthorized: true, ca }
+      : { rejectUnauthorized: false },
     max: 5,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,

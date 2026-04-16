@@ -1,6 +1,9 @@
 node_modules/
 dist/
 cdk.out/
+.env
+.env.*
+!.env.example
 *.js
 *.d.ts
 *.d.ts.map
