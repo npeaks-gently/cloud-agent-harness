@@ -72,7 +72,7 @@ Plans:
 - [x] 03-02-PLAN.md — Slack, GitHub, and Linear integration utility modules with SDK wrappers and tests (INTG-01, INTG-02, INTG-03)
 - [x] 03-03-PLAN.md — Stage handler modifications (approve, intake, PR, stage-router), D-10 sub-ticket lifecycle, and merge executor (INTG-01, INTG-02, INTG-03, INTG-04)
 - [x] 03-04-PLAN.md — Agent entrypoint git push, PostHog agent run tracking, and CDK Slack webhook construct (INTG-01, INTG-02, INTG-04)
-- [ ] 03-05-PLAN.md — Slack webhook Lambda handler with signature verification and pipeline resume (INTG-01)
+- [x] 03-05-PLAN.md — Slack webhook Lambda handler with signature verification and pipeline resume (INTG-01)
 
 ### Phase 4: Headless Pipeline
 **Goal**: The pipeline runs fully autonomously after the initial questioning phase -- an LLM agent makes routine decisions that previously required human input, and high-risk decisions escalate to Slack
