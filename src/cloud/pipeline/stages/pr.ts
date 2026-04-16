@@ -84,7 +84,8 @@ export async function handlePrStage(
   const { owner, repo } = parseRepoUrl(msg.repoUrl);
 
   // Step 3: Build PR title and body (D-08)
-  const title = `[CAH] ${msg.context.featureDescription}`;
+  const safeDescription = msg.context.featureDescription.slice(0, 200).trim();
+  const title = `[CAH] ${safeDescription}`;
   const body = [
     '## Pipeline Run',
     '',

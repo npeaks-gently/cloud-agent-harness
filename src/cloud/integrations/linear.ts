@@ -135,9 +135,10 @@ export async function createParentTicket(
   const config = getLinearConfig();
 
   try {
+    const safeDescription = featureDescription.slice(0, 200).trim();
     const issuePayload = await client.createIssue({
       teamId: config.teamId,
-      title: `[CAH] ${featureDescription}`,
+      title: `[CAH] ${safeDescription}`,
       description: `Pipeline run: ${runId}\n\nFeature: ${featureDescription}`,
     });
 
