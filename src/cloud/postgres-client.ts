@@ -20,14 +20,18 @@ const RDS_CA_BUNDLE_PATH = resolve(__dirname, '../../infra/certs/rds-global-bund
 
 /**
  * Load the RDS global CA bundle for SSL certificate verification.
- * Falls back to rejectUnauthorized: false if the cert file is missing
- * (e.g., in unit tests with mocked pg).
+ * Returns undefined only in test environments. In production, throws
+ * if the cert file is missing to prevent silent SSL downgrade.
  */
 function loadRdsCaCert(): Buffer | undefined {
   try {
     return readFileSync(RDS_CA_BUNDLE_PATH);
   } catch {
-    return undefined;
+    if (process.env.NODE_ENV === 'test') return undefined;
+    throw new Error(
+      `RDS CA bundle not found at ${RDS_CA_BUNDLE_PATH}. ` +
+      'Ensure infra/certs/rds-global-bundle.pem is included in the Lambda package.',
+    );
   }
 }
 
