@@ -48,8 +48,12 @@ export async function handleExecuteStage(
   client: DaytonaClient,
   bucket: string,
 ): Promise<StageResult> {
-  // Plan count from pipeline context (set by planner, defaults to 1)
-  const planCount = (msg.context as Record<string, unknown>).planCount as number ?? 1;
+  // Plan count from pipeline context (set by planner, defaults to 1).
+  // Validate at runtime: JSON deserialization may yield a string, so coerce safely.
+  const rawPlanCount = (msg.context as Record<string, unknown>).planCount;
+  const planCount = typeof rawPlanCount === 'number' && rawPlanCount > 0
+    ? rawPlanCount
+    : 1;
 
   // Get all completed tasks for this run's execute stage (resume support, D-13)
   const completed = await getCompletedTasks(pool, msg.runId, 'execute');
