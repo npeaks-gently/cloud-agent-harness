@@ -1,45 +1,49 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// ─── Mocks ──────────────────────────────────────────────────────────────────
+// ─── Hoisted mock functions ─────────────────────────────────────────────────
 
-const mockDownloadPlanningDir = vi.fn().mockResolvedValue(5);
-const mockUploadModifiedFiles = vi.fn().mockResolvedValue([
-  'runs/run-123/phases/02/SUMMARY.md',
-]);
+/**
+ * vi.hoisted() ensures these declarations run before vi.mock() factories.
+ * This avoids "Cannot access before initialization" errors from ESM hoisting.
+ */
+const {
+  mockDownloadPlanningDir,
+  mockUploadModifiedFiles,
+  mockExecutePlan,
+  mockRunPhase,
+  mockExecSync,
+  mockReadFile,
+} = vi.hoisted(() => ({
+  mockDownloadPlanningDir: vi.fn(),
+  mockUploadModifiedFiles: vi.fn(),
+  mockExecutePlan: vi.fn(),
+  mockRunPhase: vi.fn(),
+  mockExecSync: vi.fn(),
+  mockReadFile: vi.fn(),
+}));
+
+// ─── Module mocks ───────────────────────────────────────────────────────────
 
 vi.mock('../entrypoint/s3-sync.js', () => ({
   downloadPlanningDir: mockDownloadPlanningDir,
   uploadModifiedFiles: mockUploadModifiedFiles,
 }));
 
-const mockExecutePlan = vi.fn().mockResolvedValue({
-  success: true,
-  totalCostUsd: 1.25,
-  durationMs: 30000,
-});
-const mockRunPhase = vi.fn().mockResolvedValue({
-  success: true,
-  totalCostUsd: 2.50,
-  totalDurationMs: 60000,
-});
-
-vi.mock('../../sdk/src/index.js', () => ({
-  GSD: class MockGSD {
-    constructor() {
-      // no-op
-    }
-    executePlan = mockExecutePlan;
-    runPhase = mockRunPhase;
-  },
+vi.mock('../entrypoint/sdk-loader.js', () => ({
+  loadSdk: () => Promise.resolve({
+    GSD: class MockGSD {
+      constructor() {
+        // no-op
+      }
+      executePlan = mockExecutePlan;
+      runPhase = mockRunPhase;
+    },
+  }),
 }));
-
-const mockExecSync = vi.fn().mockReturnValue(Buffer.from(''));
 
 vi.mock('node:child_process', () => ({
   execSync: mockExecSync,
 }));
-
-const mockReadFile = vi.fn().mockResolvedValue(Buffer.from('file content'));
 
 vi.mock('node:fs/promises', () => ({
   readFile: mockReadFile,
@@ -97,6 +101,24 @@ describe('agent-entrypoint', () => {
     vi.clearAllMocks();
     clearEnv();
     consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Set up default mock return values
+    mockDownloadPlanningDir.mockResolvedValue(5);
+    mockUploadModifiedFiles.mockResolvedValue([
+      'runs/run-123/phases/02/SUMMARY.md',
+    ]);
+    mockExecutePlan.mockResolvedValue({
+      success: true,
+      totalCostUsd: 1.25,
+      durationMs: 30000,
+    });
+    mockRunPhase.mockResolvedValue({
+      success: true,
+      totalCostUsd: 2.50,
+      totalDurationMs: 60000,
+    });
+    mockExecSync.mockReturnValue(Buffer.from(''));
+    mockReadFile.mockResolvedValue(Buffer.from('file content'));
   });
 
   afterEach(() => {
@@ -140,7 +162,6 @@ describe('agent-entrypoint', () => {
   describe('S3 context download', () => {
     it('calls downloadPlanningDir with correct bucket, runId, and workDir', async () => {
       setRequiredEnv();
-      mockExecSync.mockReturnValue(Buffer.from(''));
 
       await main();
 
@@ -159,7 +180,6 @@ describe('agent-entrypoint', () => {
   describe('agent execution', () => {
     it('calls GSD.executePlan for execute stage', async () => {
       setRequiredEnv({ CAH_STAGE: 'execute' });
-      mockExecSync.mockReturnValue(Buffer.from(''));
 
       await main();
 
@@ -169,7 +189,6 @@ describe('agent-entrypoint', () => {
 
     it('calls GSD.runPhase for research stage', async () => {
       setRequiredEnv({ CAH_STAGE: 'research' });
-      mockExecSync.mockReturnValue(Buffer.from(''));
 
       await main();
 
@@ -179,7 +198,6 @@ describe('agent-entrypoint', () => {
 
     it('calls GSD.runPhase for plan stage', async () => {
       setRequiredEnv({ CAH_STAGE: 'plan' });
-      mockExecSync.mockReturnValue(Buffer.from(''));
 
       await main();
 
@@ -189,7 +207,6 @@ describe('agent-entrypoint', () => {
 
     it('calls GSD.runPhase for verify stage', async () => {
       setRequiredEnv({ CAH_STAGE: 'verify' });
-      mockExecSync.mockReturnValue(Buffer.from(''));
 
       await main();
 
@@ -199,7 +216,6 @@ describe('agent-entrypoint', () => {
 
     it('skips agent execution for approve stage (auto-approve per D-10)', async () => {
       setRequiredEnv({ CAH_STAGE: 'approve' });
-      mockExecSync.mockReturnValue(Buffer.from(''));
 
       await main();
 
@@ -209,7 +225,6 @@ describe('agent-entrypoint', () => {
 
     it('skips agent execution for pr stage (Phase 3 stub)', async () => {
       setRequiredEnv({ CAH_STAGE: 'pr' });
-      mockExecSync.mockReturnValue(Buffer.from(''));
 
       await main();
 
@@ -250,7 +265,6 @@ describe('agent-entrypoint', () => {
   describe('JSON result output', () => {
     it('writes JSON result to stdout with success, costUsd, durationMs, artifacts', async () => {
       setRequiredEnv({ CAH_STAGE: 'execute' });
-      mockExecSync.mockReturnValue(Buffer.from(''));
       mockUploadModifiedFiles.mockResolvedValueOnce(['runs/run-123/phases/02/SUMMARY.md']);
 
       await main();
