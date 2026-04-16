@@ -200,21 +200,20 @@ export async function handleSlackAction(
     if (!nextStage) throw new Error('No stage after Approve');
 
     // Build StageMessage for the next stage (Execute)
-    // Pipeline run config stores repoUrl, branch, featureDescription, etc.
-    const config = pipelineRun.config as Record<string, unknown>;
+    // Read from dedicated PipelineRun columns, not the JSON config blob
     const nextMsg: StageMessage = {
       runId: approval.pipelineRunId,
       projectId: pipelineRun.projectId,
-      repoUrl: (config.repoUrl as string) ?? '',
-      branch: (config.branch as string) ?? '',
+      repoUrl: pipelineRun.repoUrl,
+      branch: pipelineRun.branch,
       stage: nextStage,
       context: {
-        featureDescription: (config.featureDescription as string) ?? '',
+        featureDescription: pipelineRun.featureDescription,
         phaseNumber: pipelineRun.phaseCurrent,
         phaseTotal: pipelineRun.phaseTotal,
         previousArtifacts: [],
-        featureBranch: config.featureBranch as string | undefined,
-        linearParentTicketId: config.linearParentTicketId as string | undefined,
+        featureBranch: pipelineRun.featureBranch,
+        linearParentTicketId: pipelineRun.linearParentTicketId,
       },
     };
 

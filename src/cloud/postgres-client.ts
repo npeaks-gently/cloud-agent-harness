@@ -93,6 +93,11 @@ function mapRowToPipelineRun(row: Record<string, unknown>): PipelineRun {
     config: (typeof row.config === 'string'
       ? JSON.parse(row.config)
       : row.config ?? {}) as Record<string, unknown>,
+    repoUrl: (row.repo_url as string) ?? '',
+    branch: (row.branch as string) ?? '',
+    featureDescription: (row.feature_description as string) ?? '',
+    featureBranch: row.feature_branch as string | undefined,
+    linearParentTicketId: row.linear_parent_ticket_id as string | undefined,
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
   };
