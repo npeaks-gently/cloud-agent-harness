@@ -17,12 +17,9 @@
  *   2. Schema migration applied (init + migrate-002)
  *   3. Lambda has Anthropic API key in Secrets Manager
  *   4. Daytona configured (for agent dispatch stages)
+ *   5. Env vars in infra/.env (loaded automatically)
  *
- * Required environment variables:
- *   DATABASE_URL    -- Postgres connection string
- *   SQS_QUEUE_URL   -- SQS job queue URL
- *
- * Optional:
+ * Optional overrides (env vars or infra/.env):
  *   REPO_URL         -- Git repo for pipeline to work on (default: this repo)
  *   FEATURE_DESC     -- Feature description (default: test feature)
  *   TIMEOUT_MINUTES  -- Max wait time (default: 30)
@@ -31,6 +28,12 @@
  *   npx ts-node --esm scripts/run-pipeline-e2e.ts
  *   FEATURE_DESC="add a health check endpoint" npx ts-node --esm scripts/run-pipeline-e2e.ts
  */
+
+import { config } from 'dotenv';
+import { resolve } from 'node:path';
+
+// Load infra/.env relative to this script's location
+config({ path: resolve(import.meta.dirname ?? __dirname, '..', 'infra', '.env') });
 
 import { createDbPool } from '../src/cloud/postgres-client.js';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';

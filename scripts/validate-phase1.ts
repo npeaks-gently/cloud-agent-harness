@@ -25,6 +25,12 @@
  * Usage: npx ts-node --esm scripts/validate-phase1.ts
  */
 
+import { config } from 'dotenv';
+import { resolve } from 'node:path';
+
+// Load infra/.env relative to this script's location
+config({ path: resolve(import.meta.dirname ?? __dirname, '..', 'infra', '.env') });
+
 import { createDbPool, insertPipelineRun, getPipelineRun } from '../src/cloud/postgres-client.js';
 import { uploadArtifact, downloadArtifact, listArtifacts } from '../src/cloud/s3-artifacts.js';
 import { DaytonaClient } from '../src/cloud/daytona-client.js';

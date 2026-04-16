@@ -12,15 +12,16 @@
  * Prerequisites:
  *   1. CDK stack deployed with Phase 2 changes: cd infra && npx cdk deploy
  *   2. Schema migration applied: psql "$DATABASE_URL" -f scripts/migrate-002-idempotency.sql
- *   3. Environment variables set (see below)
- *
- * Required environment variables:
- *   DATABASE_URL     -- Postgres connection string
- *   SQS_QUEUE_URL    -- SQS job queue URL (from CDK output QueueUrl)
- *   STAGE_QUEUE_URL  -- SQS stage queue URL (from CDK output StageQueueUrl)
+ *   3. Env vars in infra/.env (loaded automatically)
  *
  * Usage: npx ts-node --esm scripts/validate-phase2-pipeline.ts
  */
+
+import { config } from 'dotenv';
+import { resolve } from 'node:path';
+
+// Load infra/.env relative to this script's location
+config({ path: resolve(import.meta.dirname ?? __dirname, '..', 'infra', '.env') });
 
 import { createDbPool } from '../src/cloud/postgres-client.js';
 import { SQSClient, SendMessageCommand, ReceiveMessageCommand, DeleteMessageCommand } from '@aws-sdk/client-sqs';
