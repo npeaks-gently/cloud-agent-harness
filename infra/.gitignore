@@ -1,0 +1,8 @@
+node_modules/
+dist/
+cdk.out/
+*.js
+*.d.ts
+*.d.ts.map
+!vitest.config.ts
+!cdk.json
