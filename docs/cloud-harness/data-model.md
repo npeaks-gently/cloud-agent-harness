@@ -57,11 +57,47 @@ One row per agent task within a pipeline. Each stage may spawn one or more agent
 | `idx_agent_runs_task_key` | `agent_runs` | `task_key` | Unique partial (`WHERE task_key IS NOT NULL`) | Idempotent upsert conflict target |
 | `idx_pipeline_runs_status` | `pipeline_runs` | `status` | B-tree | Find active/completed runs |
 
-## Relationships
+## Entity Relationship Diagram
 
-```
-pipeline_runs 1 ──── * agent_runs
-     (id)              (pipeline_run_id)
+```mermaid
+erDiagram
+    pipeline_runs ||--o{ agent_runs : "has many"
+
+    pipeline_runs {
+        UUID id PK
+        TEXT project_id
+        TEXT status
+        INTEGER phase_current
+        INTEGER phase_total
+        JSONB config
+        TEXT current_stage
+        TEXT repo_url
+        TEXT branch
+        TEXT feature_description
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    agent_runs {
+        UUID id PK
+        UUID pipeline_run_id FK
+        INTEGER phase
+        TEXT plan_name
+        INTEGER wave
+        TEXT status
+        TEXT task_key UK
+        TEXT session_id
+        TEXT model
+        INTEGER input_tokens
+        INTEGER output_tokens
+        NUMERIC cost_usd
+        INTEGER duration_ms
+        TEXT error_message
+        JSONB artifacts
+        TIMESTAMPTZ started_at
+        TIMESTAMPTZ completed_at
+        TIMESTAMPTZ created_at
+    }
 ```
 
 One pipeline run has many agent runs. Each agent run belongs to exactly one pipeline run.
