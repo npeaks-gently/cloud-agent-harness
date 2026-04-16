@@ -252,24 +252,32 @@ export async function handleSlackAction(
 
 // --- Lambda entry point ------------------------------------------------------
 
+/** Module-scoped pool reused across warm Lambda invocations. */
+let _pool: Pool | undefined;
+
+/**
+ * Returns a cached Postgres pool, creating one on first call (cold start).
+ * The pool is reused across warm invocations to avoid exhausting RDS
+ * connections under burst load.
+ */
+async function getPool(): Promise<Pool> {
+  if (!_pool) {
+    const databaseUrl = process.env.DATABASE_URL;
+    if (!databaseUrl) throw new Error('DATABASE_URL not set');
+    const { createDbPool } = await import('../postgres-client.js');
+    _pool = createDbPool(databaseUrl);
+  }
+  return _pool;
+}
+
 /**
  * Lambda handler entry point for Slack interactive webhooks.
  *
- * Creates a Postgres pool at cold start (imported from postgres-client).
- * The pool is reused across warm invocations.
+ * Uses a module-scoped Postgres pool that is reused across warm invocations.
+ * The pool is NOT ended after each request -- this is intentional for
+ * connection reuse in Lambda's execution model.
  */
 export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-  // Pool creation is deferred to the first invocation
-  // In production, DATABASE_URL is set from Secrets Manager via CDK
-  const { createDbPool } = await import('../postgres-client.js');
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    return { statusCode: 500, body: 'Server configuration error' };
-  }
-  const pool = createDbPool(databaseUrl);
-  try {
-    return await handleSlackAction(event, pool);
-  } finally {
-    await pool.end();
-  }
+  const pool = await getPool();
+  return handleSlackAction(event, pool);
 };
