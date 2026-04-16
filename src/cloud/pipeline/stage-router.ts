@@ -208,29 +208,37 @@ export async function routeStage(
   const handler = STAGE_HANDLERS[msg.stage];
   const result = await handler(msg, pool, client, bucket);
 
-  // Step 4: Update pipeline stage in Postgres
-  const nextStage = NEXT_STAGE[msg.stage];
-  await updatePipelineStage(pool, msg.runId, nextStage);
+  // Step 4: Update pipeline state in Postgres
+  if (result.status === 'failed') {
+    // Mark the pipeline as failed at the current stage -- do not advance
+    await pool.query(
+      `UPDATE pipeline_runs SET status = 'failed', current_stage = $1 WHERE id = $2`,
+      [msg.stage, msg.runId],
+    );
+  } else {
+    const nextStage = NEXT_STAGE[msg.stage];
+    await updatePipelineStage(pool, msg.runId, nextStage);
 
-  // Step 5: Send next-stage SQS message (if not terminal and not failed)
-  if (nextStage !== null && result.status !== 'failed') {
-    const sqs = sqsClient ?? new SQSClient({ region: DEFAULT_REGION });
-    const nextMsg: StageMessage = {
-      ...msg,
-      stage: nextStage,
-      context: {
-        ...msg.context,
-        previousArtifacts: [
-          ...msg.context.previousArtifacts,
-          ...result.tasks.flatMap(t => t.artifacts),
-        ],
-      },
-    };
+    // Step 5: Send next-stage SQS message (if not terminal)
+    if (nextStage !== null) {
+      const sqs = sqsClient ?? new SQSClient({ region: DEFAULT_REGION });
+      const nextMsg: StageMessage = {
+        ...msg,
+        stage: nextStage,
+        context: {
+          ...msg.context,
+          previousArtifacts: [
+            ...msg.context.previousArtifacts,
+            ...result.tasks.flatMap(t => t.artifacts),
+          ],
+        },
+      };
 
-    await sqs.send(new SendMessageCommand({
-      QueueUrl: stageQueueUrl,
-      MessageBody: JSON.stringify(nextMsg),
-    }));
+      await sqs.send(new SendMessageCommand({
+        QueueUrl: stageQueueUrl,
+        MessageBody: JSON.stringify(nextMsg),
+      }));
+    }
   }
 
   return result;
