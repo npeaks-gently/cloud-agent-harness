@@ -39,6 +39,7 @@
     "node": ">=22.0.0"
   },
   "devDependencies": {
+    "@types/pg": "^8.20.0",
     "c8": "^11.0.0",
     "esbuild": "^0.24.0",
     "vitest": "^4.1.2"
@@ -48,5 +49,13 @@
     "prepublishOnly": "npm run build:hooks",
     "test": "node scripts/run-tests.cjs",
     "test:coverage": "c8 --check-coverage --lines 70 --reporter text --include 'get-shit-done/bin/lib/*.cjs' --exclude 'tests/**' --all node scripts/run-tests.cjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1030.0",
+    "@aws-sdk/client-secrets-manager": "^3.1030.0",
+    "@aws-sdk/client-sqs": "^3.1030.0",
+    "@aws-sdk/lib-storage": "^3.1030.0",
+    "@daytonaio/sdk": "^0.166.0",
+    "pg": "^8.20.0"
   }
 }

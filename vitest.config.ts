@@ -19,6 +19,14 @@ export default defineConfig({
           testTimeout: 120_000,
         },
       },
+      {
+        test: {
+          name: 'cloud',
+          root: '.',
+          include: ['src/cloud/test/**/*.test.ts'],
+          exclude: ['src/cloud/test/**/*.integration.test.ts'],
+        },
+      },
     ],
   },
 });
