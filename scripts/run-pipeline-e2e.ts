@@ -32,12 +32,12 @@
 import { config } from 'dotenv';
 import { resolve } from 'node:path';
 
-// Load infra/.env (one level up from this script)
-config({ path: resolve(import.meta.dirname ?? __dirname, '..', '.env') });
+// Load infra/.env
+config({ path: resolve(import.meta.dirname ?? __dirname, '..', 'infra', '.env') });
 
-import { createDbPool } from '../../src/cloud/postgres-client.js';
+import { createDbPool } from '../src/cloud/postgres-client.ts';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
-import type { PipelineJobMessage } from '../../src/cloud/types.js';
+import type { PipelineJobMessage } from '../src/cloud/types.ts';
 import type { Pool } from 'pg';
 
 // ─── Config ────────────────────────────────────────────────────────────────
