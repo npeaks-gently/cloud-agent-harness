@@ -103,12 +103,10 @@ export class CahIam extends Construct {
     new secretsmanager.Secret(this, 'AgentCredentialsSecret', {
       secretName: `${props.prefix}/agent-credentials`,
       description: 'IAM access key credentials for Daytona agent user',
-      secretStringValue: cdk.SecretValue.unsafePlainText(
-        JSON.stringify({
-          accessKeyId: accessKey.accessKeyId,
-          secretAccessKey: accessKey.secretAccessKey.unsafeUnwrap(),
-        }),
-      ),
+      secretObjectValue: {
+        accessKeyId: cdk.SecretValue.unsafePlainText(accessKey.accessKeyId),
+        secretAccessKey: accessKey.secretAccessKey,
+      },
     });
   }
 }
