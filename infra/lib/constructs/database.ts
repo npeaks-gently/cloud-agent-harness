@@ -98,7 +98,13 @@ export class CahDatabase extends Construct {
     });
 
     // The secret is automatically created by fromGeneratedSecret
-    this.secret = this.instance.secret!;
+    const secret = this.instance.secret;
+    if (!secret) {
+      throw new Error(
+        'RDS instance secret is undefined. Ensure credentials use fromGeneratedSecret().',
+      );
+    }
+    this.secret = secret;
 
     // --- Outputs ---------------------------------------------------------------
 
