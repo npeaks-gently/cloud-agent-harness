@@ -116,22 +116,22 @@ export async function handleSlackAction(
   pool: Pool,
   sqsClient?: SQSClient,
 ): Promise<APIGatewayProxyResult> {
-  const body = event.body ?? '';
   const timestamp = event.headers['x-slack-request-timestamp'] ?? '';
   const slackSignature = event.headers['x-slack-signature'] ?? '';
 
-  // Step 1: Verify signature
+  // Decode base64 body first so signature verification uses the same bytes Slack signed
+  const rawBody = event.isBase64Encoded && event.body
+    ? Buffer.from(event.body, 'base64').toString('utf-8')
+    : (event.body ?? '');
+
+  // Step 1: Verify signature against the decoded body
   const signingSecret = await getSigningSecret();
-  if (!verifySlackSignature(signingSecret, timestamp, body, slackSignature)) {
+  if (!verifySlackSignature(signingSecret, timestamp, rawBody, slackSignature)) {
     console.log(JSON.stringify({ level: 'warn', message: 'Invalid Slack signature' }));
     return { statusCode: 401, body: 'Invalid signature' };
   }
 
   // Step 2: Parse payload (Slack sends application/x-www-form-urlencoded)
-  // Handle base64-encoded body from API Gateway v2
-  const rawBody = event.isBase64Encoded
-    ? Buffer.from(body, 'base64').toString('utf-8')
-    : body;
   const params = new URLSearchParams(rawBody);
   const payloadJson = params.get('payload');
   if (!payloadJson) {
