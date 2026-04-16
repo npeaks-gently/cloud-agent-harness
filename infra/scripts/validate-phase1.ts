@@ -28,15 +28,15 @@
 import { config } from 'dotenv';
 import { resolve } from 'node:path';
 
-// Load infra/.env relative to this script's location
-config({ path: resolve(import.meta.dirname ?? __dirname, '..', 'infra', '.env') });
+// Load infra/.env (one level up from this script)
+config({ path: resolve(import.meta.dirname ?? __dirname, '..', '.env') });
 
-import { createDbPool, insertPipelineRun, getPipelineRun } from '../src/cloud/postgres-client.js';
-import { uploadArtifact, downloadArtifact, listArtifacts } from '../src/cloud/s3-artifacts.js';
-import { DaytonaClient } from '../src/cloud/daytona-client.js';
-import { SqsConsumer } from '../src/cloud/sqs-consumer.js';
+import { createDbPool, insertPipelineRun, getPipelineRun } from '../../src/cloud/postgres-client.js';
+import { uploadArtifact, downloadArtifact, listArtifacts } from '../../src/cloud/s3-artifacts.js';
+import { DaytonaClient } from '../../src/cloud/daytona-client.js';
+import { SqsConsumer } from '../../src/cloud/sqs-consumer.js';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
-import type { ArtifactKey, PipelineJobMessage } from '../src/cloud/types.js';
+import type { ArtifactKey, PipelineJobMessage } from '../../src/cloud/types.js';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
