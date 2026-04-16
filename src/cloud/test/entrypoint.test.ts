@@ -12,6 +12,7 @@ const {
   mockExecutePlan,
   mockRunPhase,
   mockExecSync,
+  mockSpawnSync,
   mockReadFile,
   mockTrack,
   mockFlush,
@@ -21,6 +22,7 @@ const {
   mockExecutePlan: vi.fn(),
   mockRunPhase: vi.fn(),
   mockExecSync: vi.fn(),
+  mockSpawnSync: vi.fn(),
   mockReadFile: vi.fn(),
   mockTrack: vi.fn(),
   mockFlush: vi.fn().mockResolvedValue(undefined),
@@ -47,6 +49,7 @@ vi.mock('../entrypoint/sdk-loader.js', () => ({
 
 vi.mock('node:child_process', () => ({
   execSync: mockExecSync,
+  spawnSync: mockSpawnSync,
 }));
 
 vi.mock('node:fs/promises', () => ({
@@ -135,6 +138,7 @@ describe('agent-entrypoint', () => {
       totalDurationMs: 60000,
     });
     mockExecSync.mockReturnValue('');
+    mockSpawnSync.mockReturnValue({ status: 0, stdout: '', stderr: '' });
     mockReadFile.mockResolvedValue(Buffer.from('file content'));
   });
 
@@ -309,14 +313,15 @@ describe('agent-entrypoint', () => {
 
       await main();
 
-      const calls = mockExecSync.mock.calls.map(
-        (c: [string, ...unknown[]]) => c[0],
+      // createTaskBranch uses spawnSync for git fetch and git checkout
+      const spawnCalls = mockSpawnSync.mock.calls.map(
+        (c: [string, string[], ...unknown[]]) => [c[0], c[1]],
       );
-      expect(calls).toContain(
-        'git fetch origin cah/run-123/my-feature',
+      expect(spawnCalls).toContainEqual(
+        ['git', ['fetch', 'origin', 'cah/run-123/my-feature']],
       );
-      expect(calls.some((c: string) =>
-        c.includes('git checkout -b cah/run-123/02-02-01-PLAN.md-2'),
+      expect(spawnCalls.some(([cmd, args]: [string, string[]]) =>
+        cmd === 'git' && args[0] === 'checkout' && args[1] === '-b' && args[2] === 'cah/run-123/02-02-01-PLAN.md-2',
       )).toBe(true);
     });
 
@@ -326,7 +331,7 @@ describe('agent-entrypoint', () => {
         CAH_FEATURE_BRANCH: 'cah/run-123/my-feature',
         CAH_GITHUB_TOKEN: 'ghp_test123',
       });
-      // Return non-empty status so commit happens
+      // Return non-empty status so commit happens (git add and git status still use execSync)
       mockExecSync.mockImplementation((cmd: string) => {
         if (typeof cmd === 'string' && cmd.includes('git status --porcelain')) {
           return 'M src/file.ts';
@@ -336,13 +341,16 @@ describe('agent-entrypoint', () => {
 
       await main();
 
-      const calls = mockExecSync.mock.calls.map(
-        (c: [string, ...unknown[]]) => c[0],
+      // commitAndPush uses spawnSync for git commit and git push
+      const spawnCalls = mockSpawnSync.mock.calls.map(
+        (c: [string, string[], ...unknown[]]) => [c[0], c[1]],
       );
-      expect(calls.some((c: string) =>
-        c.includes('git push origin cah/run-123/02-02-01-PLAN.md-1'),
+      expect(spawnCalls.some(([cmd, args]: [string, string[]]) =>
+        cmd === 'git' && args[0] === 'push' && args[1] === 'origin' && args[2] === 'cah/run-123/02-02-01-PLAN.md-1',
       )).toBe(true);
-      expect(calls.some((c: string) => c.includes('git commit'))).toBe(true);
+      expect(spawnCalls.some(([cmd, args]: [string, string[]]) =>
+        cmd === 'git' && args[0] === 'commit',
+      )).toBe(true);
     });
 
     it('skips git operations when CAH_FEATURE_BRANCH is not set', async () => {
@@ -351,14 +359,15 @@ describe('agent-entrypoint', () => {
 
       await main();
 
-      const calls = mockExecSync.mock.calls.map(
-        (c: [string, ...unknown[]]) => c[0],
+      // spawnSync should not have been called for git checkout or git push
+      const spawnCalls = mockSpawnSync.mock.calls.map(
+        (c: [string, string[], ...unknown[]]) => [c[0], c[1]],
       );
-      expect(calls.every((c: string) =>
-        !c.includes('git checkout -b cah/'),
+      expect(spawnCalls.every(([cmd, args]: [string, string[]]) =>
+        !(cmd === 'git' && args[0] === 'checkout'),
       )).toBe(true);
-      expect(calls.every((c: string) =>
-        !c.includes('git push origin'),
+      expect(spawnCalls.every(([cmd, args]: [string, string[]]) =>
+        !(cmd === 'git' && args[0] === 'push'),
       )).toBe(true);
     });
 
@@ -382,16 +391,16 @@ describe('agent-entrypoint', () => {
 
       await main();
 
-      const calls = mockExecSync.mock.calls.map(
-        (c: [string, ...unknown[]]) => c[0],
+      // createTaskBranch uses spawnSync — branch should be created (before execution)
+      const spawnCalls = mockSpawnSync.mock.calls.map(
+        (c: [string, string[], ...unknown[]]) => [c[0], c[1]],
       );
-      // Branch should be created (before execution)
-      expect(calls.some((c: string) =>
-        c.includes('git checkout -b cah/'),
+      expect(spawnCalls.some(([cmd, args]: [string, string[]]) =>
+        cmd === 'git' && args[0] === 'checkout' && args[1] === '-b',
       )).toBe(true);
       // But push should NOT happen (execution failed)
-      expect(calls.every((c: string) =>
-        !c.includes('git push origin'),
+      expect(spawnCalls.every(([cmd, args]: [string, string[]]) =>
+        !(cmd === 'git' && args[0] === 'push'),
       )).toBe(true);
     });
 

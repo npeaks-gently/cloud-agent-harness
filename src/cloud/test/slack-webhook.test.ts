@@ -123,7 +123,7 @@ function buildSlackEvent(
     body = `payload=${encodeURIComponent(payload)}`;
   }
 
-  const signature = overrides?.signature ?? 'v0=valid_computed_signature';
+  const signature = overrides?.signature ?? 'v0=computed_hex';
 
   return {
     body,
@@ -158,13 +158,12 @@ const MOCK_PIPELINE_RUN = {
   status: 'paused',
   phaseCurrent: 1,
   phaseTotal: 3,
-  config: {
-    repoUrl: 'https://github.com/org/repo.git',
-    branch: 'main',
-    featureDescription: 'Add user auth',
-    featureBranch: 'cah/run123/add-user-auth',
-    linearParentTicketId: 'linear-ticket-789',
-  },
+  repoUrl: 'https://github.com/org/repo.git',
+  branch: 'main',
+  featureDescription: 'Add user auth',
+  featureBranch: 'cah/run123/add-user-auth',
+  linearParentTicketId: 'linear-ticket-789',
+  config: {},
   createdAt: new Date('2026-01-01T00:00:00Z'),
   updatedAt: new Date('2026-01-01T00:00:00Z'),
 };
@@ -316,7 +315,7 @@ describe('slack-webhook-handler', () => {
   describe('approval flow', () => {
     it('resolves approval and sends SQS message on pipeline_approve', async () => {
       mockGetApprovalByToken.mockResolvedValue(MOCK_APPROVAL);
-      mockResolveApproval.mockResolvedValue(undefined);
+      mockResolveApproval.mockResolvedValue(true);
       mockGetPipelineRun.mockResolvedValue(MOCK_PIPELINE_RUN);
       mockSqsSend.mockResolvedValue({});
 
@@ -355,7 +354,7 @@ describe('slack-webhook-handler', () => {
 
     it('resolves approval as rejected and marks pipeline failed on pipeline_reject', async () => {
       mockGetApprovalByToken.mockResolvedValue(MOCK_APPROVAL);
-      mockResolveApproval.mockResolvedValue(undefined);
+      mockResolveApproval.mockResolvedValue(true);
 
       const event = buildSlackEvent('pipeline_reject', VALID_TOKEN) as unknown as APIGatewayProxyEvent;
       const result = await handleSlackAction(event, pool, sqsClient);
@@ -386,7 +385,7 @@ describe('slack-webhook-handler', () => {
   describe('analytics tracking', () => {
     it('tracks approval_approved event on approve', async () => {
       mockGetApprovalByToken.mockResolvedValue(MOCK_APPROVAL);
-      mockResolveApproval.mockResolvedValue(undefined);
+      mockResolveApproval.mockResolvedValue(true);
       mockGetPipelineRun.mockResolvedValue(MOCK_PIPELINE_RUN);
       mockSqsSend.mockResolvedValue({});
 
@@ -402,7 +401,7 @@ describe('slack-webhook-handler', () => {
 
     it('tracks approval_rejected event on reject', async () => {
       mockGetApprovalByToken.mockResolvedValue(MOCK_APPROVAL);
-      mockResolveApproval.mockResolvedValue(undefined);
+      mockResolveApproval.mockResolvedValue(true);
 
       const event = buildSlackEvent('pipeline_reject', VALID_TOKEN) as unknown as APIGatewayProxyEvent;
       await handleSlackAction(event, pool, sqsClient);
@@ -416,7 +415,7 @@ describe('slack-webhook-handler', () => {
 
     it('calls flush before returning', async () => {
       mockGetApprovalByToken.mockResolvedValue(MOCK_APPROVAL);
-      mockResolveApproval.mockResolvedValue(undefined);
+      mockResolveApproval.mockResolvedValue(true);
       mockGetPipelineRun.mockResolvedValue(MOCK_PIPELINE_RUN);
       mockSqsSend.mockResolvedValue({});
 
@@ -432,7 +431,8 @@ describe('slack-webhook-handler', () => {
   describe('verifySlackSignature', () => {
     it('uses timingSafeEqual for constant-time comparison', () => {
       const now = String(Math.floor(Date.now() / 1000));
-      verifySlackSignature('secret', now, 'body', 'v0=sig');
+      // Signature must match computed length (v0= + mock digest 'computed_hex' = 'v0=computed_hex')
+      verifySlackSignature('secret', now, 'body', 'v0=computed_hex');
 
       expect(mockTimingSafeEqual).toHaveBeenCalledOnce();
     });
