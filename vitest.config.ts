@@ -21,10 +21,26 @@ export default defineConfig({
       },
       {
         test: {
-          name: 'cloud',
+          name: 'infra-unit',
+          root: './infra',
+          include: ['test/**/*.test.ts'],
+          exclude: ['test/**/*.integration.test.ts'],
+        },
+      },
+      {
+        test: {
+          name: 'cloud-unit',
           root: '.',
-          include: ['src/cloud/test/**/*.test.ts'],
-          exclude: ['src/cloud/test/**/*.integration.test.ts'],
+          include: ['src/cloud/**/*.test.ts'],
+          exclude: ['src/cloud/**/*.integration.test.ts'],
+        },
+      },
+      {
+        test: {
+          name: 'cloud-integration',
+          root: '.',
+          include: ['src/cloud/**/*.integration.test.ts'],
+          testTimeout: 120_000,
         },
       },
     ],
