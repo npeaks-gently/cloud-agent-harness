@@ -1,18 +1,33 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PipelineStage, type StageResult } from '../pipeline/types.js';
 
-// --- Mocks -------------------------------------------------------------------
+// --- Hoisted mocks (available during vi.mock factory execution) --------------
 
-const mockSend = vi.fn();
-const mockHandleIntakeStage = vi.fn();
-const mockHandleResearchStage = vi.fn();
-const mockHandlePlanStage = vi.fn();
-const mockHandleApproveStage = vi.fn();
-const mockHandleExecuteStage = vi.fn();
-const mockHandleVerifyStage = vi.fn();
-const mockHandlePrStage = vi.fn();
-const mockUpdatePipelineStage = vi.fn();
-const mockPoolQuery = vi.fn();
+const {
+  mockSend,
+  mockHandleIntakeStage,
+  mockHandleResearchStage,
+  mockHandlePlanStage,
+  mockHandleApproveStage,
+  mockHandleExecuteStage,
+  mockHandleVerifyStage,
+  mockHandlePrStage,
+  mockUpdatePipelineStage,
+  mockPoolQuery,
+} = vi.hoisted(() => ({
+  mockSend: vi.fn(),
+  mockHandleIntakeStage: vi.fn(),
+  mockHandleResearchStage: vi.fn(),
+  mockHandlePlanStage: vi.fn(),
+  mockHandleApproveStage: vi.fn(),
+  mockHandleExecuteStage: vi.fn(),
+  mockHandleVerifyStage: vi.fn(),
+  mockHandlePrStage: vi.fn(),
+  mockUpdatePipelineStage: vi.fn(),
+  mockPoolQuery: vi.fn(),
+}));
+
+// --- Module mocks ------------------------------------------------------------
 
 vi.mock('@aws-sdk/client-sqs', () => {
   return {
