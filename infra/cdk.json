@@ -1,0 +1,11 @@
+{
+  "app": "npx ts-node --esm bin/cah.ts",
+  "watch": {
+    "include": ["**"],
+    "exclude": ["node_modules", "dist", "test", "cdk.out"]
+  },
+  "context": {
+    "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
+    "@aws-cdk/core:checkSecretUsage": true
+  }
+}
