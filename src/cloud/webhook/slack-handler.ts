@@ -86,10 +86,10 @@ export function verifySlackSignature(
   const mySignature = `v0=${createHmac('sha256', signingSecret)
     .update(sigBaseString)
     .digest('hex')}`;
-  return timingSafeEqual(
-    Buffer.from(mySignature),
-    Buffer.from(signature),
-  );
+  const a = Buffer.from(mySignature);
+  const b = Buffer.from(signature);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 // --- Handler -----------------------------------------------------------------
