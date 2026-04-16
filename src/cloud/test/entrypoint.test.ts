@@ -122,6 +122,12 @@ describe('agent-entrypoint', () => {
       success: true,
       totalCostUsd: 1.25,
       durationMs: 30000,
+      usage: {
+        inputTokens: 15000,
+        outputTokens: 3500,
+        cacheReadInputTokens: 8000,
+        cacheCreationInputTokens: 2000,
+      },
     });
     mockRunPhase.mockResolvedValue({
       success: true,
@@ -366,6 +372,12 @@ describe('agent-entrypoint', () => {
         success: false,
         totalCostUsd: 0.50,
         durationMs: 10000,
+        usage: {
+          inputTokens: 5000,
+          outputTokens: 1000,
+          cacheReadInputTokens: 2000,
+          cacheCreationInputTokens: 500,
+        },
       });
 
       await main();
@@ -429,6 +441,31 @@ describe('agent-entrypoint', () => {
           costUsd: 1.25,
           success: true,
           projectId: 'proj-abc',
+          inputTokens: 15000,
+          outputTokens: 3500,
+          cacheReadInputTokens: 8000,
+          cacheCreationInputTokens: 2000,
+        }),
+      );
+    });
+
+    it('uses zero-value token usage when result.usage is undefined', async () => {
+      setRequiredEnv({ CAH_STAGE: 'execute' });
+      mockExecutePlan.mockResolvedValueOnce({
+        success: true,
+        totalCostUsd: 0.50,
+        durationMs: 5000,
+      });
+
+      await main();
+
+      expect(mockTrack).toHaveBeenCalledWith(
+        'agent_run_completed',
+        expect.objectContaining({
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
         }),
       );
     });

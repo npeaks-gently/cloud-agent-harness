@@ -234,8 +234,9 @@ export async function main(): Promise<void> {
       const result = await gsd.executePlan(plan);
       success = result.success;
       costUsd = result.totalCostUsd ?? 0;
+      const usage = result.usage ?? { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
 
-      // Phase 3 D-14 / INTG-04 SC-4: Track agent run completion with cost data
+      // Phase 3 D-14 / INTG-04 SC-4: Track agent run completion with cost and token usage data
       track('agent_run_completed', {
         runId,
         phase,
@@ -244,6 +245,10 @@ export async function main(): Promise<void> {
         costUsd,
         success,
         projectId: process.env.CAH_PROJECT_ID ?? '',
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        cacheReadInputTokens: usage.cacheReadInputTokens,
+        cacheCreationInputTokens: usage.cacheCreationInputTokens,
       });
 
       // Phase 3 D-06: Commit and push task branch
