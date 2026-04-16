@@ -47,10 +47,12 @@ function requireEnv(name: string): string {
 // ─── Modified file detection ────────────────────────────────────────────────
 
 /**
- * Finds files modified since the last commit using git diff.
+ * Finds modified and newly created files using git status.
  *
- * Reads each modified file and returns path/content pairs suitable
- * for uploadModifiedFiles(). Only includes files that exist and can be read.
+ * Uses `git status --porcelain` to capture both tracked modifications and
+ * untracked new files (which `git diff --name-only HEAD` would miss).
+ * Reads each file and returns path/content pairs suitable for
+ * uploadModifiedFiles(). Only includes files that exist and can be read.
  *
  * @param workDir - Working directory to detect changes in
  * @returns Array of file objects with relative path and content buffer
@@ -58,7 +60,7 @@ function requireEnv(name: string): string {
 async function findModifiedFiles(
   workDir: string,
 ): Promise<Array<{ path: string; content: Buffer }>> {
-  const output = execSync('git diff --name-only HEAD', {
+  const output = execSync('git status --porcelain', {
     cwd: workDir,
     encoding: 'buffer',
   });
@@ -67,7 +69,9 @@ async function findModifiedFiles(
     .toString('utf-8')
     .split('\n')
     .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+    .filter((line) => line.length > 0)
+    .filter((line) => !line.startsWith('D ') && !line.startsWith(' D'))
+    .map((line) => line.replace(/^[?! MADRCU]{1,2}\s+/, ''));
 
   const files: Array<{ path: string; content: Buffer }> = [];
 
