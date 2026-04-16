@@ -12,41 +12,10 @@
 
 import type { Pool } from 'pg';
 import { PipelineStage, PipelineError, type StageMessage, type StageResult } from '../types.js';
+import { parseRepoUrl } from '../utils.js';
 import { createPullRequest } from '../../integrations/github.js';
 import { attachPrUrl, updateTicketStatus } from '../../integrations/linear.js';
 import { track } from '../../analytics.js';
-
-// --- Helpers -----------------------------------------------------------------
-
-/**
- * Parses a GitHub repository URL into owner and repo components.
- *
- * Handles both full URLs (https://github.com/owner/repo) and
- * shorthand format (owner/repo). Strips trailing .git if present.
- *
- * @param url - Repository URL or owner/repo string
- * @returns Object with owner and repo strings
- * @throws {PipelineError} When the URL cannot be parsed
- */
-function parseRepoUrl(url: string): { owner: string; repo: string } {
-  const cleaned = url.replace(/\.git$/, '');
-
-  const urlMatch = cleaned.match(/github\.com\/([^/]+)\/([^/]+)/);
-  if (urlMatch) {
-    return { owner: urlMatch[1], repo: urlMatch[2] };
-  }
-
-  const shortMatch = cleaned.match(/^([^/]+)\/([^/]+)$/);
-  if (shortMatch) {
-    return { owner: shortMatch[1], repo: shortMatch[2] };
-  }
-
-  throw new PipelineError(
-    `Cannot parse repository URL: ${url}`,
-    'handlePrStage',
-    PipelineStage.PR,
-  );
-}
 
 // --- PR handler --------------------------------------------------------------
 
@@ -81,7 +50,7 @@ export async function handlePrStage(
   }
 
   // Step 2: Parse owner/repo from repoUrl
-  const { owner, repo } = parseRepoUrl(msg.repoUrl);
+  const { owner, repo } = parseRepoUrl(msg.repoUrl, 'handlePrStage', PipelineStage.PR);
 
   // Step 3: Build PR title and body (D-08)
   const safeDescription = msg.context.featureDescription.slice(0, 200).trim();

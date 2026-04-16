@@ -13,45 +13,14 @@
 
 import type { Pool } from 'pg';
 import { PipelineStage, PipelineError, type StageMessage, type StageResult } from '../types.js';
+import { parseRepoUrl } from '../utils.js';
 import { createFeatureBranch } from '../../integrations/github.js';
 import { createParentTicket } from '../../integrations/linear.js';
 import { updatePipelineRunBranch, updatePipelineRunLinearTicket } from '../../postgres-client.js';
 import { track } from '../../analytics.js';
 
-// --- Helpers -----------------------------------------------------------------
-
-/**
- * Parses a GitHub repository URL into owner and repo components.
- *
- * Handles both full URLs (https://github.com/owner/repo) and
- * shorthand format (owner/repo). Strips trailing .git if present.
- *
- * @param url - Repository URL or owner/repo string
- * @returns Object with owner and repo strings
- * @throws {PipelineError} When the URL cannot be parsed
- */
-export function parseRepoUrl(url: string): { owner: string; repo: string } {
-  // Strip trailing .git
-  const cleaned = url.replace(/\.git$/, '');
-
-  // Try full URL: https://github.com/owner/repo
-  const urlMatch = cleaned.match(/github\.com\/([^/]+)\/([^/]+)/);
-  if (urlMatch) {
-    return { owner: urlMatch[1], repo: urlMatch[2] };
-  }
-
-  // Try shorthand: owner/repo
-  const shortMatch = cleaned.match(/^([^/]+)\/([^/]+)$/);
-  if (shortMatch) {
-    return { owner: shortMatch[1], repo: shortMatch[2] };
-  }
-
-  throw new PipelineError(
-    `Cannot parse repository URL: ${url}`,
-    'parseRepoUrl',
-    PipelineStage.Intake,
-  );
-}
+// Re-export for backward compatibility (tests import from intake.js)
+export { parseRepoUrl } from '../utils.js';
 
 // --- Intake handler ----------------------------------------------------------
 
@@ -112,7 +81,7 @@ export async function handleIntakeStage(
   }
 
   // Step 2: Create feature branch on GitHub (D-05)
-  const { owner, repo } = parseRepoUrl(msg.repoUrl);
+  const { owner, repo } = parseRepoUrl(msg.repoUrl, 'handleIntakeStage', PipelineStage.Intake);
   const shortRunId = msg.runId.slice(0, 8);
   const featureSlug = msg.context.featureDescription
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
