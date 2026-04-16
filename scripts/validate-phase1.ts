@@ -56,7 +56,7 @@ function validateEnvironment(): boolean {
 
   for (const name of REQUIRED_ENV_VARS) {
     const value = process.env[name];
-    if (value) {
+    if (value && value.trim().length > 0) {
       // T-03-01: Never log credential values -- only log presence
       console.log(`  ${name}: [SET]`);
     } else {
@@ -121,7 +121,11 @@ async function validatePostgres(): Promise<ValidationResult> {
       message: 'Postgres connection + insert/query successful',
     };
   } finally {
-    await pool.end();
+    try {
+      await pool.end();
+    } catch {
+      // best-effort pool teardown
+    }
   }
 }
 
