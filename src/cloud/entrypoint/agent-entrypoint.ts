@@ -15,7 +15,7 @@
  */
 
 import { S3Client } from '@aws-sdk/client-s3';
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { track, flush } from '../analytics.js';
@@ -137,14 +137,22 @@ function createTaskBranch(
   wave: string,
 ): string {
   const branchName = `cah/${runId}/${phase}-${plan}-${wave}`;
-  execSync(`git fetch origin ${featureBranch}`, {
+  const fetchResult = spawnSync('git', ['fetch', 'origin', featureBranch], {
     cwd: workDir,
     encoding: 'utf-8',
+    stdio: 'pipe',
   });
-  execSync(`git checkout -b ${branchName} origin/${featureBranch}`, {
+  if (fetchResult.status !== 0) {
+    throw new Error(`git fetch failed: ${String(fetchResult.stderr)}`);
+  }
+  const checkoutResult = spawnSync('git', ['checkout', '-b', branchName, `origin/${featureBranch}`], {
     cwd: workDir,
     encoding: 'utf-8',
+    stdio: 'pipe',
   });
+  if (checkoutResult.status !== 0) {
+    throw new Error(`git checkout failed: ${String(checkoutResult.stderr)}`);
+  }
   return branchName;
 }
 
@@ -167,15 +175,23 @@ function commitAndPush(
     encoding: 'utf-8',
   }).trim();
   if (status.length > 0) {
-    execSync(`git commit -m "${commitMessage}"`, {
+    const commitResult = spawnSync('git', ['commit', '-m', commitMessage], {
       cwd: workDir,
       encoding: 'utf-8',
+      stdio: 'pipe',
     });
+    if (commitResult.status !== 0) {
+      throw new Error(`git commit failed: ${String(commitResult.stderr)}`);
+    }
   }
-  execSync(`git push origin ${taskBranch}`, {
+  const pushResult = spawnSync('git', ['push', 'origin', taskBranch], {
     cwd: workDir,
     encoding: 'utf-8',
+    stdio: 'pipe',
   });
+  if (pushResult.status !== 0) {
+    throw new Error(`git push failed: ${String(pushResult.stderr)}`);
+  }
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────────
