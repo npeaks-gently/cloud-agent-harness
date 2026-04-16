@@ -623,24 +623,24 @@ export async function createPullRequest(
 | A5 | API Gateway HTTP API (v2) is sufficient for Slack webhook; REST API (v1) is unnecessary | Architecture | Low -- HTTP API is simpler and cheaper; REST API adds features not needed here |
 | A6 | Slack interactive payloads are sent as `application/x-www-form-urlencoded` | Pitfalls | Low -- well-documented in Slack docs, confirmed via Context7 |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Slack Channel Configuration**
+1. **Slack Channel Configuration** (RESOLVED: Plan 03 Task 1 uses `SLACK_APPROVAL_CHANNEL` env var on approve stage)
    - What we know: The approve stage sends a message to a Slack channel. The channel ID must be configured somewhere.
    - What's unclear: Should the channel be per-project, per-pipeline-run, or a single global channel? Is it an env var, Secrets Manager entry, or Postgres config?
    - Recommendation: Use an environment variable `SLACK_APPROVAL_CHANNEL` on the stage router Lambda. Simple and configurable per deployment. Can be moved to per-project config in v2.
 
-2. **GitHub Token Provisioning for Daytona Sandboxes**
+2. **GitHub Token Provisioning for Daytona Sandboxes** (RESOLVED: Plan 04 Task 1 injects `CAH_GITHUB_TOKEN` env var into sandbox)
    - What we know: Agents need to `git push` task branches to the remote. The current `sandbox-task.ts` injects `ANTHROPIC_API_KEY` from Secrets Manager.
    - What's unclear: Where does the GitHub token come from? Is it per-repository, per-organization, or a GitHub App installation token?
    - Recommendation: Store a GitHub PAT (fine-grained, scoped to the target repo) in Secrets Manager. Inject as `CAH_GITHUB_TOKEN` env var in the sandbox, similar to `ANTHROPIC_API_KEY`. For v1 this is the simplest path.
 
-3. **Linear Team ID and State IDs**
+3. **Linear Team ID and State IDs** (RESOLVED: Plan 02 Task 2 uses `LINEAR_TEAM_ID` and `LINEAR_STATE_MAP` env vars on Lambda)
    - What we know: `issueCreate` requires `teamId`. `issueUpdate` with status change requires `stateId`.
    - What's unclear: These IDs are organization-specific. They need to be configured per deployment.
    - Recommendation: Store Linear team ID and state ID mapping (e.g., `{ "todo": "state-uuid-1", "in_progress": "state-uuid-2", "done": "state-uuid-3" }`) in Secrets Manager alongside the API key, or as environment variables on the Lambda.
 
-4. **Integration Executor: Lambda vs. Dedicated Stage**
+4. **Integration Executor: Lambda vs. Dedicated Stage** (RESOLVED: Plan 03 Task 3 creates merge-executor.ts as logic within execute stage)
    - What we know: D-07 specifies that after all agents in a wave complete, task branches must be merged back into the feature branch in wave-DAG order.
    - What's unclear: Does this happen inside the execute stage handler (after each wave), or as a separate stage between Execute and Verify?
    - Recommendation: Implement as logic within the execute stage handler. After each wave of agents completes, the executor merges their task branches into the feature branch before starting the next wave. This keeps the pipeline stage count unchanged and mirrors how the local harness handles wave completion.

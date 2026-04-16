@@ -70,8 +70,8 @@ Plans:
 Plans:
 - [ ] 03-01-PLAN.md — Pipeline types extension, approvals migration, Postgres query functions, and PostHog analytics utility (INTG-01, INTG-04)
 - [ ] 03-02-PLAN.md — Slack, GitHub, and Linear integration utility modules with SDK wrappers and tests (INTG-01, INTG-02, INTG-03)
-- [ ] 03-03-PLAN.md — Stage handler modifications (approve, intake, PR, stage-router) and merge executor (INTG-01, INTG-02, INTG-03, INTG-04)
-- [ ] 03-04-PLAN.md — Agent entrypoint git push and CDK Slack webhook construct (INTG-01, INTG-02)
+- [ ] 03-03-PLAN.md — Stage handler modifications (approve, intake, PR, stage-router), D-10 sub-ticket lifecycle, and merge executor (INTG-01, INTG-02, INTG-03, INTG-04)
+- [ ] 03-04-PLAN.md — Agent entrypoint git push, PostHog agent run tracking, and CDK Slack webhook construct (INTG-01, INTG-02, INTG-04)
 - [ ] 03-05-PLAN.md — Slack webhook Lambda handler with signature verification and pipeline resume (INTG-01)
 
 ### Phase 4: Headless Pipeline
