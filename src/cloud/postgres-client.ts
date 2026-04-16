@@ -292,5 +292,179 @@ export async function updateAgentRun(
   }
 }
 
+// ─── Approval queries ──────────────────────────────────────────────────────
+
+/**
+ * Inserts a new approval record for the Slack approval gate.
+ *
+ * Uses ON CONFLICT (token) DO NOTHING for idempotent replay safety.
+ *
+ * @param pool - Postgres connection pool
+ * @param pipelineRunId - Parent pipeline run UUID
+ * @param token - Unique approval token (UUID) embedded in Slack buttons
+ * @param slackChannel - Slack channel ID where the approval message was sent
+ * @param slackMessageTs - Slack message timestamp for updating the message later
+ * @returns Generated UUID for the new approval row
+ */
+export async function insertApproval(
+  pool: Pool,
+  pipelineRunId: string,
+  token: string,
+  slackChannel: string,
+  slackMessageTs: string,
+): Promise<string> {
+  const sql = `
+    INSERT INTO approvals (pipeline_run_id, token, slack_channel, slack_message_ts)
+    VALUES ($1, $2, $3, $4)
+    ON CONFLICT (token) DO NOTHING
+    RETURNING id
+  `;
+
+  try {
+    const result = await pool.query(sql, [pipelineRunId, token, slackChannel, slackMessageTs]);
+    // ON CONFLICT DO NOTHING returns no rows on conflict -- return empty string
+    return (result.rows[0]?.id as string) ?? '';
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new PostgresClientError(
+      `Failed to insert approval: ${message}`,
+      'insertApproval',
+      sql,
+    );
+  }
+}
+
+/**
+ * Retrieves an approval by its unique token.
+ *
+ * @param pool - Postgres connection pool
+ * @param token - Approval token UUID
+ * @returns Approval row or null if not found
+ */
+export async function getApprovalByToken(
+  pool: Pool,
+  token: string,
+): Promise<{
+  id: string;
+  pipelineRunId: string;
+  status: string;
+  slackChannel: string | null;
+  requestedAt: Date;
+} | null> {
+  const sql = `
+    SELECT id, pipeline_run_id, status, slack_channel, requested_at
+    FROM approvals
+    WHERE token = $1
+  `;
+
+  try {
+    const result = await pool.query(sql, [token]);
+    if (result.rows.length === 0) return null;
+    const row = result.rows[0] as Record<string, unknown>;
+    return {
+      id: row.id as string,
+      pipelineRunId: row.pipeline_run_id as string,
+      status: row.status as string,
+      slackChannel: row.slack_channel as string | null,
+      requestedAt: new Date(row.requested_at as string),
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new PostgresClientError(
+      `Failed to get approval by token: ${message}`,
+      'getApprovalByToken',
+      sql,
+    );
+  }
+}
+
+/**
+ * Resolves an approval by setting its status and recording who resolved it.
+ *
+ * Only pending approvals can be resolved (T-03-04: status transition guard).
+ *
+ * @param pool - Postgres connection pool
+ * @param token - Approval token UUID
+ * @param status - Resolution status ('approved' or 'rejected')
+ * @param resolvedBy - Identifier of who resolved the approval (Slack user ID)
+ */
+export async function resolveApproval(
+  pool: Pool,
+  token: string,
+  status: 'approved' | 'rejected',
+  resolvedBy: string,
+): Promise<void> {
+  const sql = `
+    UPDATE approvals
+    SET status = $1, resolved_at = NOW(), resolved_by = $2
+    WHERE token = $3 AND status = 'pending'
+  `;
+
+  try {
+    await pool.query(sql, [status, resolvedBy, token]);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new PostgresClientError(
+      `Failed to resolve approval: ${message}`,
+      'resolveApproval',
+      sql,
+    );
+  }
+}
+
+// ─── Pipeline run updates ──────────────────────────────────────────────────
+
+/**
+ * Updates the feature branch name on a pipeline run.
+ *
+ * @param pool - Postgres connection pool
+ * @param runId - Pipeline run UUID
+ * @param featureBranch - Feature branch name (e.g., cah/{run_id_short}/{slug})
+ */
+export async function updatePipelineRunBranch(
+  pool: Pool,
+  runId: string,
+  featureBranch: string,
+): Promise<void> {
+  const sql = `UPDATE pipeline_runs SET feature_branch = $1 WHERE id = $2`;
+
+  try {
+    await pool.query(sql, [featureBranch, runId]);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new PostgresClientError(
+      `Failed to update pipeline run branch: ${message}`,
+      'updatePipelineRunBranch',
+      sql,
+    );
+  }
+}
+
+/**
+ * Updates the Linear parent ticket ID on a pipeline run.
+ *
+ * @param pool - Postgres connection pool
+ * @param runId - Pipeline run UUID
+ * @param linearParentTicketId - Linear issue ID for the parent ticket
+ */
+export async function updatePipelineRunLinearTicket(
+  pool: Pool,
+  runId: string,
+  linearParentTicketId: string,
+): Promise<void> {
+  const sql = `UPDATE pipeline_runs SET linear_parent_ticket_id = $1 WHERE id = $2`;
+
+  try {
+    await pool.query(sql, [linearParentTicketId, runId]);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new PostgresClientError(
+      `Failed to update pipeline run Linear ticket: ${message}`,
+      'updatePipelineRunLinearTicket',
+      sql,
+    );
+  }
+}
+
 // Re-export mappers for testing
 export { mapRowToPipelineRun, mapRowToAgentRun };
