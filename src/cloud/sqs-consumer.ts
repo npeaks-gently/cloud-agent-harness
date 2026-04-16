@@ -146,9 +146,18 @@ export class SqsConsumer {
       );
     }
 
+    const receiptHandle = msg.ReceiptHandle;
+    if (!receiptHandle) {
+      throw new SqsConsumerError(
+        `Message ${msg.MessageId ?? '(no id)'} missing ReceiptHandle`,
+        'receiveMessage',
+        msg.MessageId,
+      );
+    }
+
     return {
       message: parsed,
-      receiptHandle: msg.ReceiptHandle!,
+      receiptHandle,
     };
   }
 
