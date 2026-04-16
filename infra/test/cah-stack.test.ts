@@ -275,6 +275,81 @@ describe('Stack Outputs', () => {
   });
 });
 
+// --- Slack Webhook Tests (Phase 3) -------------------------------------------
+
+describe('Slack Webhook', () => {
+  it('creates the webhook Lambda with correct function name', () => {
+    const template = createTemplate();
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      FunctionName: 'cah-dev-slack-webhook',
+      Runtime: 'nodejs22.x',
+    });
+  });
+
+  it('creates an HTTP API for the webhook', () => {
+    const template = createTemplate();
+    template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
+      Name: 'cah-dev-slack-webhook',
+      ProtocolType: 'HTTP',
+    });
+  });
+
+  it('webhook Lambda has STAGE_QUEUE_URL environment variable', () => {
+    const template = createTemplate();
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      FunctionName: 'cah-dev-slack-webhook',
+      Environment: {
+        Variables: Match.objectLike({
+          STAGE_QUEUE_URL: Match.anyValue(),
+          SLACK_SIGNING_SECRET_ARN: Match.anyValue(),
+          DB_SECRET_ARN: Match.anyValue(),
+        }),
+      },
+    });
+  });
+
+  it('webhook Lambda IAM role has SQS SendMessage permission', () => {
+    const template = createTemplate();
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: 'sqs:SendMessage',
+            Effect: 'Allow',
+          }),
+        ]),
+      },
+    });
+  });
+
+  it('webhook Lambda IAM role has Secrets Manager access', () => {
+    const template = createTemplate();
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: 'secretsmanager:GetSecretValue',
+            Effect: 'Allow',
+          }),
+        ]),
+      },
+    });
+  });
+
+  it('exports SlackWebhookUrl', () => {
+    const template = createTemplate();
+    template.hasOutput('SlackWebhookUrl', {});
+  });
+
+  it('webhook Lambda has 10-second timeout', () => {
+    const template = createTemplate();
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      FunctionName: 'cah-dev-slack-webhook',
+      Timeout: 10,
+    });
+  });
+});
+
 // --- Stack Synthesis Test ----------------------------------------------------
 
 describe('Stack Synthesis', () => {
@@ -285,7 +360,7 @@ describe('Stack Synthesis', () => {
 
   it('contains the expected number of resource types', () => {
     const template = createTemplate();
-    // VPC, subnets, route tables, IGW, security groups, RDS, S3, SQS x2, IAM, Secrets
+    // VPC, subnets, route tables, IGW, security groups, RDS, S3, SQS x2, IAM, Secrets, Lambda, API Gateway
     const resources = template.toJSON().Resources;
     expect(Object.keys(resources).length).toBeGreaterThan(15);
   });

@@ -16,6 +16,7 @@ import * as apigw from 'aws-cdk-lib/aws-apigatewayv2';
 import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
+import * as path from 'node:path';
 
 // --- Props -------------------------------------------------------------------
 
@@ -136,7 +137,7 @@ export class CahSlackWebhook extends Construct {
       functionName: `${props.prefix}-slack-webhook`,
       runtime: lambda.Runtime.NODEJS_22_X,
       handler: 'index.handler',
-      code: lambda.Code.fromAsset('lambda/slack-webhook'),
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/slack-webhook')),
       timeout: cdk.Duration.seconds(10),
       memorySize: 256,
       role,
