@@ -76,18 +76,40 @@ export function _resetTokenCache(): void {
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
+/** Cached Linear config parsed once at cold start. */
+let cachedLinearConfig: { teamId: string; states: Record<string, string> } | undefined;
+
 /**
  * Linear team and state configuration read from environment variables.
+ * Parsed once and cached for the Lambda execution lifetime.
  *
  * LINEAR_TEAM_ID: The Linear team ID for issue creation.
  * LINEAR_STATE_MAP: JSON string mapping status keys to Linear state UUIDs.
  * Expected shape: { "todo": "state-uuid", "in_progress": "state-uuid", "done": "state-uuid" }
+ *
+ * @throws {LinearClientError} When LINEAR_TEAM_ID is not set or LINEAR_STATE_MAP is invalid JSON
  */
 function getLinearConfig(): { teamId: string; states: Record<string, string> } {
-  return {
-    teamId: process.env.LINEAR_TEAM_ID ?? '',
-    states: JSON.parse(process.env.LINEAR_STATE_MAP ?? '{}') as Record<string, string>,
-  };
+  if (cachedLinearConfig) return cachedLinearConfig;
+
+  const teamId = process.env.LINEAR_TEAM_ID;
+  if (!teamId) throw new LinearClientError('LINEAR_TEAM_ID not set', 'getLinearConfig');
+
+  let states: Record<string, string> = {};
+  const raw = process.env.LINEAR_STATE_MAP;
+  if (raw) {
+    try {
+      states = JSON.parse(raw) as Record<string, string>;
+    } catch {
+      throw new LinearClientError(
+        'LINEAR_STATE_MAP contains invalid JSON',
+        'getLinearConfig',
+      );
+    }
+  }
+
+  cachedLinearConfig = { teamId, states };
+  return cachedLinearConfig;
 }
 
 // ─── Ticket CRUD ────────────────────────────────────────────────────────────
