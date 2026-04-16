@@ -586,22 +586,22 @@ ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS feature_description TEXT;
 | A5 | Agent execution time will typically fit within Lambda's 15-minute timeout when using Daytona | Pitfalls | Medium -- some complex planning/execution tasks could exceed 15 min; async dispatch pattern may be needed |
 | A6 | RDS connection limits are sufficient for concurrent Lambda invocations without RDS Proxy | Pitfalls | Medium -- depends on Lambda concurrency; may need RDS Proxy if concurrent pipelines exceed ~50 |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Lambda timeout vs Daytona execution time**
    - What we know: Lambda has a 15-minute hard limit. Daytona sandbox execution can take variable time depending on the agent task.
    - What's unclear: Whether all agent stages complete within 15 minutes, or if async dispatch with callback is needed.
-   - Recommendation: Start with synchronous dispatch (Lambda waits for Daytona). Monitor execution times. If any stage consistently exceeds 10 minutes, refactor to async dispatch with a DynamoDB/SQS callback mechanism.
+   - RESOLVED: Synchronous dispatch (Lambda waits for Daytona). Per D-02, each stage Lambda stays under 15 minutes. Monitor execution times; refactor to async dispatch if any stage consistently exceeds 10 minutes.
 
 2. **Snapshot rebuild frequency**
    - What we know: D-08 says "rebuild when harness changes." No CI/CD for image builds.
    - What's unclear: How to detect when a snapshot is stale and needs rebuilding.
-   - Recommendation: Embed a version string (git SHA or package.json version) in the snapshot's env vars. The orchestrator reads this from the snapshot metadata and logs a warning if it doesn't match the deployed orchestrator version.
+   - RESOLVED: Deferred per D-08 (image rebuilt manually when harness changes; no CI/CD for image builds in v1). Version string embedding is a v2 enhancement.
 
 3. **SQS queue topology: single queue or one per stage?**
    - What we know: D-02 says "SQS messages between stages." Could be one queue with stage routing or separate queues.
    - What's unclear: Whether a single queue with message attributes is sufficient or separate queues provide better isolation.
-   - Recommendation: Start with a single stage queue. Add per-stage queues only if visibility timeout differences or priority requirements emerge.
+   - RESOLVED: Single stage queue with stage routing via StageMessage.stage field. Plan 04 stage-router.ts dispatches based on stage field. Plan 05 CDK construct creates one stage queue. Add per-stage queues only if isolation requirements emerge.
 
 ## Environment Availability
 
