@@ -59,6 +59,9 @@
     "@aws-sdk/client-sqs": "^3.1030.0",
     "@aws-sdk/lib-storage": "^3.1030.0",
     "@daytonaio/sdk": "^0.166.0",
+    "@linear/sdk": "^81.0.0",
+    "@octokit/rest": "^22.0.1",
+    "@slack/web-api": "^7.15.1",
     "pg": "^8.20.0"
   }
 }
