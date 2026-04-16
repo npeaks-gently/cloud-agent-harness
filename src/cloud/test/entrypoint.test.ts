@@ -13,6 +13,8 @@ const {
   mockRunPhase,
   mockExecSync,
   mockReadFile,
+  mockTrack,
+  mockFlush,
 } = vi.hoisted(() => ({
   mockDownloadPlanningDir: vi.fn(),
   mockUploadModifiedFiles: vi.fn(),
@@ -20,6 +22,8 @@ const {
   mockRunPhase: vi.fn(),
   mockExecSync: vi.fn(),
   mockReadFile: vi.fn(),
+  mockTrack: vi.fn(),
+  mockFlush: vi.fn().mockResolvedValue(undefined),
 }));
 
 // ─── Module mocks ───────────────────────────────────────────────────────────
@@ -47,6 +51,11 @@ vi.mock('node:child_process', () => ({
 
 vi.mock('node:fs/promises', () => ({
   readFile: mockReadFile,
+}));
+
+vi.mock('../analytics.js', () => ({
+  track: mockTrack,
+  flush: mockFlush,
 }));
 
 vi.mock('@aws-sdk/client-s3', () => ({
@@ -82,6 +91,8 @@ function clearEnv(): void {
   const keys = [
     'CAH_RUN_ID', 'CAH_STAGE', 'CAH_PHASE', 'CAH_PLAN',
     'CAH_BUCKET', 'CAH_REPO_URL', 'CAH_BRANCH',
+    'CAH_FEATURE_BRANCH', 'CAH_WAVE', 'CAH_GITHUB_TOKEN',
+    'CAH_PROJECT_ID',
   ];
   for (const key of keys) {
     delete process.env[key];
@@ -117,7 +128,7 @@ describe('agent-entrypoint', () => {
       totalCostUsd: 2.50,
       totalDurationMs: 60000,
     });
-    mockExecSync.mockReturnValue(Buffer.from(''));
+    mockExecSync.mockReturnValue('');
     mockReadFile.mockResolvedValue(Buffer.from('file content'));
   });
 
@@ -276,6 +287,174 @@ describe('agent-entrypoint', () => {
       expect(output).toHaveProperty('durationMs');
       expect(output).toHaveProperty('artifacts');
       expect(output.artifacts).toEqual(['runs/run-123/phases/02/SUMMARY.md']);
+    });
+  });
+
+  // ─── Git operations (D-06) ──────────────────────────────────────────────
+
+  describe('git operations', () => {
+    it('creates task branch when CAH_FEATURE_BRANCH and CAH_GITHUB_TOKEN are set', async () => {
+      setRequiredEnv({
+        CAH_STAGE: 'execute',
+        CAH_FEATURE_BRANCH: 'cah/run-123/my-feature',
+        CAH_GITHUB_TOKEN: 'ghp_test123',
+        CAH_WAVE: '2',
+      });
+
+      await main();
+
+      const calls = mockExecSync.mock.calls.map(
+        (c: [string, ...unknown[]]) => c[0],
+      );
+      expect(calls).toContain(
+        'git fetch origin cah/run-123/my-feature',
+      );
+      expect(calls.some((c: string) =>
+        c.includes('git checkout -b cah/run-123/02-02-01-PLAN.md-2'),
+      )).toBe(true);
+    });
+
+    it('commits and pushes after successful execution', async () => {
+      setRequiredEnv({
+        CAH_STAGE: 'execute',
+        CAH_FEATURE_BRANCH: 'cah/run-123/my-feature',
+        CAH_GITHUB_TOKEN: 'ghp_test123',
+      });
+      // Return non-empty status so commit happens
+      mockExecSync.mockImplementation((cmd: string) => {
+        if (typeof cmd === 'string' && cmd.includes('git status --porcelain')) {
+          return 'M src/file.ts';
+        }
+        return '';
+      });
+
+      await main();
+
+      const calls = mockExecSync.mock.calls.map(
+        (c: [string, ...unknown[]]) => c[0],
+      );
+      expect(calls.some((c: string) =>
+        c.includes('git push origin cah/run-123/02-02-01-PLAN.md-1'),
+      )).toBe(true);
+      expect(calls.some((c: string) => c.includes('git commit'))).toBe(true);
+    });
+
+    it('skips git operations when CAH_FEATURE_BRANCH is not set', async () => {
+      setRequiredEnv({ CAH_STAGE: 'execute' });
+      // No CAH_FEATURE_BRANCH or CAH_GITHUB_TOKEN
+
+      await main();
+
+      const calls = mockExecSync.mock.calls.map(
+        (c: [string, ...unknown[]]) => c[0],
+      );
+      expect(calls.every((c: string) =>
+        !c.includes('git checkout -b cah/'),
+      )).toBe(true);
+      expect(calls.every((c: string) =>
+        !c.includes('git push origin'),
+      )).toBe(true);
+    });
+
+    it('skips push when execution fails', async () => {
+      setRequiredEnv({
+        CAH_STAGE: 'execute',
+        CAH_FEATURE_BRANCH: 'cah/run-123/my-feature',
+        CAH_GITHUB_TOKEN: 'ghp_test123',
+      });
+      mockExecutePlan.mockResolvedValueOnce({
+        success: false,
+        totalCostUsd: 0.50,
+        durationMs: 10000,
+      });
+
+      await main();
+
+      const calls = mockExecSync.mock.calls.map(
+        (c: [string, ...unknown[]]) => c[0],
+      );
+      // Branch should be created (before execution)
+      expect(calls.some((c: string) =>
+        c.includes('git checkout -b cah/'),
+      )).toBe(true);
+      // But push should NOT happen (execution failed)
+      expect(calls.every((c: string) =>
+        !c.includes('git push origin'),
+      )).toBe(true);
+    });
+
+    it('configures git auth with credential helper and user config', async () => {
+      setRequiredEnv({
+        CAH_STAGE: 'execute',
+        CAH_FEATURE_BRANCH: 'cah/run-123/my-feature',
+        CAH_GITHUB_TOKEN: 'ghp_test123',
+      });
+
+      await main();
+
+      const calls = mockExecSync.mock.calls.map(
+        (c: [string, ...unknown[]]) => c[0],
+      );
+      expect(calls.some((c: string) =>
+        c.includes('git config credential.helper'),
+      )).toBe(true);
+      expect(calls.some((c: string) =>
+        c.includes('git config user.email'),
+      )).toBe(true);
+      expect(calls.some((c: string) =>
+        c.includes('git config user.name'),
+      )).toBe(true);
+    });
+  });
+
+  // ─── PostHog tracking (D-14 / INTG-04) ─────────────────────────────────
+
+  describe('PostHog tracking', () => {
+    it('tracks agent_run_completed event with cost data', async () => {
+      setRequiredEnv({
+        CAH_STAGE: 'execute',
+        CAH_PROJECT_ID: 'proj-abc',
+      });
+
+      await main();
+
+      expect(mockTrack).toHaveBeenCalledOnce();
+      expect(mockTrack).toHaveBeenCalledWith(
+        'agent_run_completed',
+        expect.objectContaining({
+          runId: 'run-123',
+          phase: '02',
+          plan: '02-01-PLAN.md',
+          wave: '1',
+          costUsd: 1.25,
+          success: true,
+          projectId: 'proj-abc',
+        }),
+      );
+    });
+
+    it('calls flush() before returning', async () => {
+      setRequiredEnv({ CAH_STAGE: 'execute' });
+
+      await main();
+
+      expect(mockFlush).toHaveBeenCalledOnce();
+    });
+
+    it('tracks agent_run_completed even when git operations are skipped', async () => {
+      setRequiredEnv({ CAH_STAGE: 'execute' });
+      // No CAH_FEATURE_BRANCH set
+
+      await main();
+
+      expect(mockTrack).toHaveBeenCalledOnce();
+      expect(mockTrack).toHaveBeenCalledWith(
+        'agent_run_completed',
+        expect.objectContaining({
+          runId: 'run-123',
+          success: true,
+        }),
+      );
     });
   });
 });
