@@ -191,12 +191,24 @@ export async function runAgentTask(
       error: message,
     };
 
-    await writeAgentCheckpoint(
-      pool,
-      taskKey,
-      { ...agentRunData, status: 'failed' },
-      failOutcome,
-    );
+    // Attempt checkpoint write but don't let it mask the original error
+    try {
+      await writeAgentCheckpoint(
+        pool,
+        taskKey,
+        { ...agentRunData, status: 'failed' },
+        failOutcome,
+      );
+    } catch (checkpointErr) {
+      console.error(JSON.stringify({
+        level: 'warn',
+        message: 'Failed to write failure checkpoint',
+        originalError: message,
+        checkpointError: checkpointErr instanceof Error
+          ? checkpointErr.message
+          : String(checkpointErr),
+      }));
+    }
 
     throw new PipelineError(
       `Agent task failed: ${message}`,
