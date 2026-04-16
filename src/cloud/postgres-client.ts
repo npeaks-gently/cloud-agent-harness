@@ -16,7 +16,8 @@ import type { PipelineRun, AgentRun } from './types.js';
 // ─── RDS CA certificate ────────────────────────────────────────────────────
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const RDS_CA_BUNDLE_PATH = resolve(__dirname, '../../infra/certs/rds-global-bundle.pem');
+const RDS_CA_BUNDLE_PATH = process.env.RDS_CA_BUNDLE_PATH
+  ?? resolve(__dirname, '../../infra/certs/rds-global-bundle.pem');
 
 /**
  * Load the RDS global CA bundle for SSL certificate verification.

@@ -262,11 +262,24 @@ let _pool: Pool | undefined;
  * Returns a cached Postgres pool, creating one on first call (cold start).
  * The pool is reused across warm invocations to avoid exhausting RDS
  * connections under burst load.
+ *
+ * If DATABASE_URL is set, uses it directly. Otherwise constructs the
+ * connection string from DB_SECRET_ARN via Secrets Manager (Lambda path).
  */
 async function getPool(): Promise<Pool> {
   if (!_pool) {
-    const databaseUrl = process.env.DATABASE_URL;
-    if (!databaseUrl) throw new Error('DATABASE_URL not set');
+    let databaseUrl = process.env.DATABASE_URL;
+    if (!databaseUrl) {
+      const secretArn = process.env.DB_SECRET_ARN;
+      if (!secretArn) throw new Error('Neither DATABASE_URL nor DB_SECRET_ARN is set');
+      const client = new SecretsManagerClient({ region: process.env.AWS_DEFAULT_REGION ?? 'us-east-1' });
+      const resp = await client.send(new GetSecretValueCommand({ SecretId: secretArn }));
+      if (!resp.SecretString) throw new Error('DB secret is empty');
+      const creds = JSON.parse(resp.SecretString) as {
+        username: string; password: string; host: string; port: number; dbname: string;
+      };
+      databaseUrl = `postgresql://${creds.username}:${encodeURIComponent(creds.password)}@${creds.host}:${creds.port}/${creds.dbname}`;
+    }
     const { createDbPool } = await import('../postgres-client.js');
     _pool = createDbPool(databaseUrl);
   }

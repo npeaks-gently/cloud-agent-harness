@@ -152,6 +152,13 @@ export class CahSlackWebhook extends Construct {
         externalModules: ['@aws-sdk/*'],
         sourceMap: true,
         banner: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);",
+        commandHooks: {
+          beforeBundling: () => [],
+          beforeInstall: () => [],
+          afterBundling: (inputDir: string, outputDir: string) => [
+            `cp ${inputDir}/infra/certs/rds-global-bundle.pem ${outputDir}/rds-global-bundle.pem`,
+          ],
+        },
       },
       role,
       vpc: props.vpc,
@@ -159,6 +166,7 @@ export class CahSlackWebhook extends Construct {
       securityGroups: [lambdaSg],
       environment: {
         NODE_OPTIONS: '--enable-source-maps',
+        RDS_CA_BUNDLE_PATH: '/var/task/rds-global-bundle.pem',
         STAGE_QUEUE_URL: props.stageQueueUrl,
         SLACK_SIGNING_SECRET_ARN: props.slackSigningSecret.secretArn,
         DB_SECRET_ARN: props.dbSecretArn,
