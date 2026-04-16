@@ -39,20 +39,22 @@ export class CahDatabase extends Construct {
   public readonly instance: rds.DatabaseInstance;
   /** The Secrets Manager secret containing database credentials. */
   public readonly secret: ISecret;
+  /** The security group controlling database access. */
+  public readonly securityGroup: ec2.SecurityGroup;
 
   constructor(scope: Construct, id: string, props: CahDatabaseProps) {
     super(scope, id);
 
     // --- Security Group --------------------------------------------------------
 
-    const securityGroup = new ec2.SecurityGroup(this, 'DbSecurityGroup', {
+    this.securityGroup = new ec2.SecurityGroup(this, 'DbSecurityGroup', {
       vpc: props.vpc,
       description: 'Allow Postgres access from Daytona Cloud (dynamic IPs)',
       allowAllOutbound: true,
     });
 
     // Daytona IPs are dynamic -- allow from anywhere, SSL enforced (T-01-01)
-    securityGroup.addIngressRule(
+    this.securityGroup.addIngressRule(
       ec2.Peer.anyIpv4(),
       ec2.Port.tcp(5432),
       'Allow Postgres from Daytona Cloud (SSL enforced)',
@@ -84,7 +86,7 @@ export class CahDatabase extends Construct {
       vpc: props.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
       publiclyAccessible: true,
-      securityGroups: [securityGroup],
+      securityGroups: [this.securityGroup],
       credentials: rds.Credentials.fromGeneratedSecret('cah_admin'),
       databaseName: 'cah',
       parameterGroup,
