@@ -55,15 +55,16 @@ export class DaytonaClientError extends Error {
  * ```
  */
 export class DaytonaClient {
-  private readonly apiKey: string;
-  private readonly target: string | undefined;
+  private readonly daytona: Daytona;
 
   constructor(opts: {
     apiKey: string;
     target?: string;
   }) {
-    this.apiKey = opts.apiKey;
-    this.target = opts.target;
+    this.daytona = new Daytona({
+      apiKey: opts.apiKey,
+      target: opts.target,
+    });
   }
 
   /**
@@ -80,11 +81,6 @@ export class DaytonaClient {
    * @throws {DaytonaClientError} When any sandbox operation fails
    */
   async executeTask(config: AgentTaskConfig): Promise<AgentTaskResult> {
-    const daytona = new Daytona({
-      apiKey: this.apiKey,
-      target: this.target,
-    });
-
     let sandboxId: string | undefined;
     const startMs = Date.now();
 
@@ -95,7 +91,7 @@ export class DaytonaClient {
         envVars: config.envVars,
       };
 
-      const sandbox = await daytona.create(createParams);
+      const sandbox = await this.daytona.create(createParams);
       sandboxId = sandbox.id;
 
       // Step 2: Clone the target repository
@@ -128,7 +124,7 @@ export class DaytonaClient {
       // Step 5: Always clean up the sandbox (D-07, Pitfall 1)
       if (sandboxId) {
         try {
-          const sandbox = await daytona.get(sandboxId);
+          const sandbox = await this.daytona.get(sandboxId);
           await sandbox.delete();
         } catch {
           // Best-effort cleanup -- sandbox may already be gone
