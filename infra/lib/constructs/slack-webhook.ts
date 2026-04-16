@@ -9,12 +9,13 @@
  * @see D-03 Webhook Lambda re-enqueues next stage on approval
  */
 import * as cdk from 'aws-cdk-lib';
-import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as apigw from 'aws-cdk-lib/aws-apigatewayv2';
 import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
+import { Runtime } from 'aws-cdk-lib/aws-lambda';
 import { Construct } from 'constructs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -74,7 +75,7 @@ export class CahSlackWebhook extends Construct {
   /** The HTTP API for Slack webhook callbacks. */
   public readonly api: apigw.HttpApi;
   /** The webhook Lambda function. */
-  public readonly webhookFn: lambda.Function;
+  public readonly webhookFn: NodejsFunction;
 
   constructor(scope: Construct, id: string, props: CahSlackWebhookProps) {
     super(scope, id);
@@ -137,18 +138,24 @@ export class CahSlackWebhook extends Construct {
 
     // --- Lambda Function -------------------------------------------------------
 
-    this.webhookFn = new lambda.Function(this, 'WebhookFn', {
+    this.webhookFn = new NodejsFunction(this, 'WebhookFn', {
       functionName: `${props.prefix}-slack-webhook`,
-      runtime: lambda.Runtime.NODEJS_22_X,
-      handler: 'index.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/slack-webhook')),
+      runtime: Runtime.NODEJS_22_X,
+      entry: path.join(__dirname, '../../../src/cloud/webhook/slack-handler.ts'),
+      projectRoot: path.join(__dirname, '../../..'),
+      handler: 'handler',
       timeout: cdk.Duration.seconds(10),
       memorySize: 256,
+      bundling: {
+        externalModules: ['@aws-sdk/*'],
+        sourceMap: true,
+      },
       role,
       vpc: props.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroups: [lambdaSg],
       environment: {
+        NODE_OPTIONS: '--enable-source-maps',
         STAGE_QUEUE_URL: props.stageQueueUrl,
         SLACK_SIGNING_SECRET_ARN: props.slackSigningSecret.secretArn,
         DB_SECRET_ARN: props.dbSecretArn,
