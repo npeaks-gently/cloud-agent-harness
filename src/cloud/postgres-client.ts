@@ -1,0 +1,272 @@
+/**
+ * Postgres connection pool + typed queries for pipeline_runs and agent_runs.
+ *
+ * Provides a connection pool factory with SSL enforcement (T-02-02),
+ * parameterized queries for all operations (T-02-01), and helper
+ * functions to map snake_case DB columns to camelCase TypeScript fields.
+ */
+
+import { Pool } from 'pg';
+import type { PoolConfig } from 'pg';
+import type { PipelineRun, AgentRun } from './types.js';
+
+// ─── Error ──────────────────────────────────────────────────────────────────
+
+/**
+ * Error thrown by Postgres client operations.
+ * Includes the operation that failed and optionally the SQL query.
+ */
+export class PostgresClientError extends Error {
+  constructor(
+    message: string,
+    public readonly operation: string,
+    public readonly query?: string,
+  ) {
+    super(message);
+    this.name = 'PostgresClientError';
+  }
+}
+
+// ─── Connection pool ────────────────────────────────────────────────────────
+
+/**
+ * Creates a Postgres connection pool with SSL enforcement.
+ *
+ * SSL is always enabled with `rejectUnauthorized: true` (T-02-02)
+ * to prevent man-in-the-middle attacks on the Daytona-to-RDS connection.
+ *
+ * @param connectionString - PostgreSQL connection string (from Secrets Manager)
+ * @returns Configured Pool instance
+ */
+export function createDbPool(connectionString: string): Pool {
+  const config: PoolConfig = {
+    connectionString,
+    ssl: { rejectUnauthorized: true },
+    max: 5,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000,
+  };
+
+  return new Pool(config);
+}
+
+// ─── Row mappers ────────────────────────────────────────────────────────────
+
+/**
+ * Maps a snake_case DB row to a camelCase PipelineRun interface.
+ */
+function mapRowToPipelineRun(row: Record<string, unknown>): PipelineRun {
+  return {
+    id: row.id as string,
+    projectId: row.project_id as string,
+    status: row.status as PipelineRun['status'],
+    phaseCurrent: row.phase_current as number,
+    phaseTotal: row.phase_total as number,
+    config: (typeof row.config === 'string'
+      ? JSON.parse(row.config)
+      : row.config ?? {}) as Record<string, unknown>,
+    createdAt: new Date(row.created_at as string),
+    updatedAt: new Date(row.updated_at as string),
+  };
+}
+
+/**
+ * Maps a snake_case DB row to a camelCase AgentRun interface.
+ */
+function mapRowToAgentRun(row: Record<string, unknown>): AgentRun {
+  return {
+    id: row.id as string,
+    pipelineRunId: row.pipeline_run_id as string,
+    phase: row.phase as number,
+    planName: row.plan_name as string,
+    wave: row.wave as number,
+    status: row.status as AgentRun['status'],
+    sessionId: row.session_id as string | undefined,
+    model: row.model as string | undefined,
+    inputTokens: (row.input_tokens as number) ?? 0,
+    outputTokens: (row.output_tokens as number) ?? 0,
+    costUsd: (row.cost_usd as number) ?? 0,
+    durationMs: (row.duration_ms as number) ?? 0,
+    errorMessage: row.error_message as string | undefined,
+    artifacts: (row.artifacts as string[]) ?? [],
+    startedAt: row.started_at ? new Date(row.started_at as string) : undefined,
+    completedAt: row.completed_at ? new Date(row.completed_at as string) : undefined,
+    createdAt: new Date(row.created_at as string),
+  };
+}
+
+// ─── Pipeline run queries ───────────────────────────────────────────────────
+
+/**
+ * Inserts a new pipeline run record.
+ *
+ * @param pool - Postgres connection pool
+ * @param projectId - Project identifier
+ * @param phaseTotal - Total number of phases
+ * @param config - Arbitrary JSON configuration
+ * @returns Generated UUID for the new pipeline run
+ */
+export async function insertPipelineRun(
+  pool: Pool,
+  projectId: string,
+  phaseTotal: number,
+  config: Record<string, unknown>,
+): Promise<string> {
+  const sql = `
+    INSERT INTO pipeline_runs (project_id, phase_total, config)
+    VALUES ($1, $2, $3)
+    RETURNING id
+  `;
+
+  try {
+    const result = await pool.query(sql, [projectId, phaseTotal, JSON.stringify(config)]);
+    return result.rows[0].id as string;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new PostgresClientError(
+      `Failed to insert pipeline run: ${message}`,
+      'insertPipelineRun',
+      sql,
+    );
+  }
+}
+
+/**
+ * Retrieves a pipeline run by ID.
+ *
+ * @param pool - Postgres connection pool
+ * @param id - Pipeline run UUID
+ * @returns PipelineRun or null if not found
+ */
+export async function getPipelineRun(
+  pool: Pool,
+  id: string,
+): Promise<PipelineRun | null> {
+  const sql = `SELECT * FROM pipeline_runs WHERE id = $1`;
+
+  try {
+    const result = await pool.query(sql, [id]);
+    if (result.rows.length === 0) return null;
+    return mapRowToPipelineRun(result.rows[0] as Record<string, unknown>);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new PostgresClientError(
+      `Failed to get pipeline run: ${message}`,
+      'getPipelineRun',
+      sql,
+    );
+  }
+}
+
+// ─── Agent run queries ──────────────────────────────────────────────────────
+
+/**
+ * Inserts a new agent run with status 'running' and started_at = NOW().
+ *
+ * @param pool - Postgres connection pool
+ * @param pipelineRunId - Parent pipeline run UUID
+ * @param phase - Phase number
+ * @param planName - Plan name within the phase
+ * @param wave - Execution wave
+ * @returns Generated UUID for the new agent run
+ */
+export async function insertAgentRun(
+  pool: Pool,
+  pipelineRunId: string,
+  phase: number,
+  planName: string,
+  wave: number,
+): Promise<string> {
+  const sql = `
+    INSERT INTO agent_runs (pipeline_run_id, phase, plan_name, wave, status, started_at)
+    VALUES ($1, $2, $3, $4, $5, NOW())
+    RETURNING id
+  `;
+
+  try {
+    const result = await pool.query(sql, [pipelineRunId, phase, planName, wave, 'running']);
+    return result.rows[0].id as string;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new PostgresClientError(
+      `Failed to insert agent run: ${message}`,
+      'insertAgentRun',
+      sql,
+    );
+  }
+}
+
+/**
+ * Updates an existing agent run with dynamic fields.
+ *
+ * Builds a parameterized SET clause from non-undefined fields.
+ * Automatically sets `completed_at = NOW()` when status is 'completed' or 'failed'.
+ *
+ * @param pool - Postgres connection pool
+ * @param id - Agent run UUID
+ * @param update - Fields to update (only non-undefined fields are applied)
+ */
+export async function updateAgentRun(
+  pool: Pool,
+  id: string,
+  update: {
+    status?: string;
+    sessionId?: string;
+    model?: string;
+    inputTokens?: number;
+    outputTokens?: number;
+    costUsd?: number;
+    durationMs?: number;
+    errorMessage?: string;
+    artifacts?: string[];
+  },
+): Promise<void> {
+  const setClauses: string[] = [];
+  const values: unknown[] = [];
+  let paramIndex = 1;
+
+  // Map camelCase fields to snake_case columns
+  const fieldMap: Array<[string, unknown]> = [
+    ['status', update.status],
+    ['session_id', update.sessionId],
+    ['model', update.model],
+    ['input_tokens', update.inputTokens],
+    ['output_tokens', update.outputTokens],
+    ['cost_usd', update.costUsd],
+    ['duration_ms', update.durationMs],
+    ['error_message', update.errorMessage],
+    ['artifacts', update.artifacts],
+  ];
+
+  for (const [column, value] of fieldMap) {
+    if (value !== undefined) {
+      setClauses.push(`${column} = $${paramIndex}`);
+      values.push(column === 'artifacts' ? JSON.stringify(value) : value);
+      paramIndex++;
+    }
+  }
+
+  // Auto-set completed_at when status indicates terminal state
+  if (update.status === 'completed' || update.status === 'failed') {
+    setClauses.push('completed_at = NOW()');
+  }
+
+  if (setClauses.length === 0) return;
+
+  values.push(id);
+  const sql = `UPDATE agent_runs SET ${setClauses.join(', ')} WHERE id = $${paramIndex}`;
+
+  try {
+    await pool.query(sql, values);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new PostgresClientError(
+      `Failed to update agent run: ${message}`,
+      'updateAgentRun',
+      sql,
+    );
+  }
+}
+
+// Re-export mappers for testing
+export { mapRowToPipelineRun, mapRowToAgentRun };
