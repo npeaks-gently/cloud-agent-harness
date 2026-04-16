@@ -386,18 +386,21 @@ export async function getApprovalByToken(
  * Resolves an approval by setting its status and recording who resolved it.
  *
  * Only pending approvals can be resolved (T-03-04: status transition guard).
+ * Returns true if a row was actually updated, false if the approval was
+ * already resolved (e.g., concurrent double-click race).
  *
  * @param pool - Postgres connection pool
  * @param token - Approval token UUID
  * @param status - Resolution status ('approved' or 'rejected')
  * @param resolvedBy - Identifier of who resolved the approval (Slack user ID)
+ * @returns true if a pending approval was resolved, false if no rows matched
  */
 export async function resolveApproval(
   pool: Pool,
   token: string,
   status: 'approved' | 'rejected',
   resolvedBy: string,
-): Promise<void> {
+): Promise<boolean> {
   const sql = `
     UPDATE approvals
     SET status = $1, resolved_at = NOW(), resolved_by = $2
@@ -405,7 +408,8 @@ export async function resolveApproval(
   `;
 
   try {
-    await pool.query(sql, [status, resolvedBy, token]);
+    const result = await pool.query(sql, [status, resolvedBy, token]);
+    return (result.rowCount ?? 0) > 0;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new PostgresClientError(

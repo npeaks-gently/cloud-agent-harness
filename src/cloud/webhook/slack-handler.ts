@@ -170,8 +170,12 @@ export async function handleSlackAction(
     return { statusCode: 200, body: 'Already processed' };
   }
 
-  // Step 5: Resolve approval
-  await resolveApproval(pool, token, isApproval ? 'approved' : 'rejected', resolvedBy);
+  // Step 5: Resolve approval (returns false if already resolved by concurrent request)
+  const wasResolved = await resolveApproval(pool, token, isApproval ? 'approved' : 'rejected', resolvedBy);
+  if (!wasResolved) {
+    console.log(JSON.stringify({ level: 'info', message: 'Approval already resolved by concurrent request', token }));
+    return { statusCode: 200, body: 'Already processed' };
+  }
 
   track(isApproval ? 'approval_approved' : 'approval_rejected', {
     runId: approval.pipelineRunId,
