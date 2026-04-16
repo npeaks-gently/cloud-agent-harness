@@ -11,12 +11,46 @@
  */
 
 import type { Pool } from 'pg';
+import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import type { DaytonaClient } from '../daytona-client.js';
 import type { AgentTaskConfig } from '../types.js';
 import type { StageMessage, AgentTaskOutcome, AgentRunData } from './types.js';
 import { PipelineError } from './types.js';
 import { buildTaskId } from './idempotency.js';
 import { writeAgentCheckpoint } from './checkpoint.js';
+
+// --- Secrets Manager (cold-start cache) -------------------------------------
+
+/** Cached Anthropic API key resolved from Secrets Manager at Lambda cold start. */
+let cachedApiKey: string | undefined;
+
+/**
+ * Fetches the Anthropic API key from Secrets Manager and caches it.
+ *
+ * The secret ARN is provided via ANTHROPIC_API_KEY_SECRET_ARN env var
+ * (set by the pipeline-lambda CDK construct). The value is cached in
+ * module scope so subsequent invocations reuse it within the same
+ * Lambda execution context.
+ *
+ * @returns The resolved API key string
+ * @throws Error if ANTHROPIC_API_KEY_SECRET_ARN is not set or secret fetch fails
+ */
+export async function getAnthropicApiKey(): Promise<string> {
+  if (cachedApiKey) return cachedApiKey;
+  const secretArn = process.env.ANTHROPIC_API_KEY_SECRET_ARN;
+  if (!secretArn) throw new Error('ANTHROPIC_API_KEY_SECRET_ARN not set');
+  const smClient = new SecretsManagerClient({
+    region: process.env.AWS_DEFAULT_REGION ?? 'us-east-1',
+  });
+  const response = await smClient.send(
+    new GetSecretValueCommand({ SecretId: secretArn }),
+  );
+  if (!response.SecretString) {
+    throw new Error('Secrets Manager returned empty SecretString');
+  }
+  cachedApiKey = response.SecretString;
+  return cachedApiKey;
+}
 
 // --- Types -------------------------------------------------------------------
 
@@ -51,9 +85,10 @@ export interface SandboxTaskConfig {
  * CAH_REPO_URL, CAH_BRANCH as environment variables (per D-07). Writes
  * checkpoint to Postgres after execution (per D-12).
  *
- * The ANTHROPIC_API_KEY is sourced from the Lambda process.env and injected
- * into the sandbox (T-02-08: never logged, scoped per sandbox invocation,
- * sandbox is ephemeral and deleted after task).
+ * The ANTHROPIC_API_KEY is fetched from Secrets Manager via the ARN in
+ * ANTHROPIC_API_KEY_SECRET_ARN and cached at cold start (T-02-08: never
+ * logged, scoped per sandbox invocation, sandbox is ephemeral and deleted
+ * after task).
  *
  * @param client - DaytonaClient instance for sandbox management
  * @param pool - Postgres connection pool for checkpoint writes
@@ -83,6 +118,9 @@ export async function runAgentTask(
     config.wave,
   );
 
+  // Resolve API key from Secrets Manager (cold-start cached)
+  const anthropicApiKey = await getAnthropicApiKey();
+
   // Build agent task config with pipeline context env vars (D-07)
   const agentConfig: AgentTaskConfig = {
     repoUrl: config.msg.repoUrl,
@@ -95,7 +133,7 @@ export async function runAgentTask(
       CAH_BUCKET: bucket,
       CAH_REPO_URL: config.msg.repoUrl,
       CAH_BRANCH: config.msg.branch,
-      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '',
+      ANTHROPIC_API_KEY: anthropicApiKey,
     },
     command: config.command,
     timeoutSeconds: config.timeoutSeconds ?? 600,
