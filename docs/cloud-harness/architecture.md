@@ -1,7 +1,7 @@
 # Cloud Agent Harness Architecture
 
 > Architecture documentation for the cloud-native autonomous feature delivery platform.
-> Reflects the implemented state as of Phase 3 completion (2026-04-17).
+> Reflects the implemented state as of Phase 4 completion (2026-04-17).
 
 ---
 
@@ -9,10 +9,10 @@
 
 The Cloud Agent Harness transforms a local CLI-based multi-agent workflow into a headless, cloud-hosted system. A user describes what they want, approves a plan in Slack, and gets a PR with the implementation -- no further human intervention required.
 
-The system is built in 5 phases. Phases 1-3 are complete. Phases 4-5 are planned but not yet implemented.
+The system is built in 5 phases. Phases 1-4 are complete. Phase 5 is planned.
 
 ```
-                     WHAT EXISTS TODAY (Phases 1-3)
+                     WHAT EXISTS TODAY (Phases 1-4)
 ┌──────────────────────────────────────────────────────────────────────┐
 │                                                                      │
 │  infra/               CDK stack (VPC, S3, RDS, SQS, IAM, Lambda,   │
@@ -22,16 +22,18 @@ The system is built in 5 phases. Phases 1-3 are complete. Phases 4-5 are planned
 │  src/cloud/entrypoint/ Agent entrypoint + S3 context sync           │
 │  src/cloud/snapshot/  Daytona image builder + snapshot manager       │
 │  src/cloud/integrations/ Slack, GitHub, Linear SDK wrappers         │
-│  src/cloud/webhook/   Slack webhook handler (signature verification) │
+│  src/cloud/webhook/   Slack webhook handler (approval + escalation) │
+│  src/cloud/dispatch/  CLI dispatch (S3 upload + SQS trigger)        │
 │  src/cloud/analytics.ts  PostHog event tracking utility              │
-│  scripts/             DB schema, migrations, e2e validation          │
+│  sdk/src/phase-runner.ts Auto-decide step in PhaseRunner lifecycle  │
+│  agents/auto-decider.md  LLM decision agent definition              │
+│  scripts/             DB schema, 4 migrations, e2e validation       │
 │                                                                      │
 └──────────────────────────────────────────────────────────────────────┘
 
-                         WHAT COMES NEXT (Phases 4-5)
+                         WHAT COMES NEXT (Phase 5)
 ┌──────────────────────────────────────────────────────────────────────┐
 │                                                                      │
-│  Phase 4:  Headless auto-decisions, fully autonomous pipeline       │
 │  Phase 5:  Observability dashboard, CLI status queries, telemetry   │
 │                                                                      │
 └──────────────────────────────────────────────────────────────────────┘
@@ -99,13 +101,13 @@ The pipeline is a 7-stage linear progression orchestrated by a Lambda function t
 
 | Stage | Type | What it does |
 |-------|------|-------------|
-| **Intake** | Inline | Creates pipeline_run row, generates runId |
+| **Intake** | Inline | Creates pipeline_run row, feature branch, Linear parent ticket; downloads planning artifacts when planningPrefix present (Phase 4) |
 | **Research** | Daytona agent | Researches the feature domain |
 | **Plan** | Daytona agent | Creates execution plans |
-| **Approve** | Inline | Auto-approve placeholder (Phase 3 replaces with Slack) |
+| **Approve** | Inline | Sends Block Kit approve/reject to Slack, writes pending approval to Postgres, returns `paused` (webhook owns resume) |
 | **Execute** | Daytona agent | Iterates plans sequentially, skips completed (resume) |
 | **Verify** | Daytona agent | Validates execution output |
-| **PR** | Inline | PR placeholder (Phase 3 replaces with GitHub integration) |
+| **PR** | Inline | Creates GitHub PR from feature branch, links PR to Linear ticket, marks ticket done |
 
 ### Checkpoint/Resume
 
@@ -146,9 +148,9 @@ Every agent task boundary writes a checkpoint to Postgres. If the pipeline dies 
 
 ---
 
-## Phase 3: Integrations (Planned)
+## Phase 3: Integrations (What Was Built)
 
-Phase 3 connects the pipeline to four external systems. 5 plans across 3 waves.
+Phase 3 connects the pipeline to four external systems. 6 plans across 3 waves.
 
 ```
                     Phase 3 Integration Points
@@ -205,19 +207,230 @@ Thin analytics utility (`src/cloud/analytics.ts`, ~20-30 lines) wrapping `postho
 - `flush()` -- must be called before every Lambda return (Lambda-specific: `flushAt: 1`, `flushInterval: 0`)
 - Events: `pipeline_started`, `stage_completed`, `approval_requested`, `approval_approved/rejected`, `agent_run_completed` (with `costUsd`), `pr_created`
 
+### Integration Modules (`src/cloud/integrations/`)
+
+Each integration follows the same pattern: module-level Secrets Manager token cache, exported async functions, and a custom error class.
+
+```
+src/cloud/integrations/
+├── slack.ts         sendApprovalMessage(), sendEscalationMessage(), getSlackBotToken()
+├── github.ts        createFeatureBranch(), createPullRequest(), getGitHubToken()
+└── linear.ts        createParentTicket(), createSubTicket(), updateTicketStatus(), attachPrUrl()
+```
+
+| Module | SDK | Secret Source | Error Class |
+|--------|-----|--------------|-------------|
+| `slack.ts` | `@slack/web-api` | `SLACK_BOT_TOKEN_SECRET_ARN` | `SlackClientError` |
+| `github.ts` | `@octokit/rest` | `CAH_GITHUB_TOKEN_SECRET_ARN` | `GitHubClientError` |
+| `linear.ts` | `@linear/sdk` | `LINEAR_API_KEY_SECRET_ARN` | `LinearClientError` |
+
+### Merge Executor (`src/cloud/pipeline/merge-executor.ts`)
+
+```
+mergeTaskBranches(featureBranch, taskBranches[])
+  For each task branch (wave-DAG order):
+    1. git merge --no-ff task-branch
+    2. On conflict: git merge --abort, skip, report
+  Returns: { merged, skipped, failed }
+```
+
 ### Wave Structure
 
 | Wave | Plans | What it builds |
 |------|-------|----------------|
 | 1 | 03-01, 03-02 | Types + migration + PostHog utility; Slack/GitHub/Linear SDK wrappers |
 | 2 | 03-03, 03-04 | Stage handler rewrites + merge executor; Agent entrypoint git push + CDK webhook construct |
-| 3 | 03-05 | Slack webhook Lambda (signature verification, token validation, SQS resume) |
+| 3 | 03-05, 03-06 | Slack webhook Lambda (signature verification, token validation, SQS resume); Token usage in PostHog events |
 
 ### New Infrastructure (CDK)
 
 - **API Gateway HTTP API** -- public endpoint for Slack webhook callbacks
 - **Slack Webhook Lambda** -- receives Slack interactive payloads, validates, resumes pipeline
 - **Secrets Manager** -- Slack signing secret, Slack bot token, GitHub token, Linear API key, PostHog API key
+
+### Database Migration (`scripts/migrate-003-approvals.sql`)
+
+| Column/Table | Purpose |
+|--------------|---------|
+| `approvals` table | UUID token, pipeline_run_id, status (pending/approved/rejected), slack_channel, slack_message_ts |
+| `pipeline_runs.repo_url` | Repository URL propagation |
+| `pipeline_runs.feature_description` | Feature description propagation |
+
+### Test Coverage (Phase 3)
+
+| Test File | Tests | What it covers |
+|-----------|-------|----------------|
+| `slack-client.test.ts` | 10 | Token caching, sendApprovalMessage Block Kit, error wrapping |
+| `github-client.test.ts` | 9 | createFeatureBranch, createPullRequest, error wrapping |
+| `linear-client.test.ts` | 10 | Ticket creation, status updates, PR attachment |
+| `approve.test.ts` | 6 | Approval flow, token generation, paused status |
+| `intake-intg.test.ts` | 8 | Feature branch creation, Linear ticket, analytics |
+| `pr.test.ts` | 7 | PR creation, Linear linking, analytics |
+| `merge-executor.test.ts` | 5 | Branch merging, conflict handling |
+| `entrypoint.test.ts` | 19 | Git auth, task branches, push, PostHog events |
+| `slack-webhook.test.ts` | 15 | HMAC verification, token validation, approval resolution |
+
+89 new tests across Phase 3 (196 total including Phases 1-2).
+
+---
+
+## Phase 4: Headless Pipeline (What Was Built)
+
+Phase 4 enables fully autonomous pipeline execution. After a user completes the interactive questioning phase locally, the pipeline runs end-to-end with zero human interaction (beyond Slack approval). An LLM agent handles routine decisions; high-risk decisions escalate to Slack.
+
+```
+                    Phase 4 Architecture
+                    ────────────────────
+
+  LOCAL                              CLOUD
+  ─────                              ─────
+
+  /gsd-discuss-phase                 Pipeline (Lambda + SQS)
+       │                                  │
+       ▼                             ┌────┴────────────────────────────┐
+  .planning/ artifacts               │ Intake (downloads planning      │
+       │                             │   artifacts from trigger prefix) │
+       ▼                             ├─────────────────────────────────┤
+  cah-dispatch                       │ Research → Plan → Approve →     │
+    1. Walk .planning/               │                                 │
+    2. Upload to S3:                 │ ┌─────────────────────────┐     │
+       triggers/{id}/planning/       │ │  AUTO-DECIDE (Step 3.7) │     │
+    3. Send PipelineJobMessage       │ │  ┌────────┐ ┌────────┐ │     │
+       to SQS with planningPrefix    │ │  │Routine │ │High-   │ │     │
+       │                             │ │  │→ Log   │ │Risk    │ │     │
+       ▼                             │ │  │DECISIONS│ │→ Slack │ │     │
+  SQS Job Queue ─────────────────►   │ │  │.md     │ │Escalate│ │     │
+                                     │ │  └────────┘ └────────┘ │     │
+                                     │ └─────────────────────────┘     │
+                                     │ Execute → Verify → PR           │
+                                     └─────────────────────────────────┘
+```
+
+### CLI Dispatch (`src/cloud/dispatch/cah-dispatch.ts`)
+
+The CLI-to-cloud bridge. Composes existing S3 and SQS primitives to upload local planning context and trigger a pipeline run.
+
+```
+cah-dispatch --project-id X --repo-url Y --branch Z --description "..."
+  1. Validate .planning/ directory exists and is non-empty
+  2. Generate triggerId (UUID v4)
+  3. Walk .planning/ recursively
+  4. Upload each file to S3: triggers/{triggerId}/planning/{relativePath}
+     (SHA256 checksums, path traversal rejection)
+  5. Send PipelineJobMessage to SQS with planningPrefix field
+  6. Print triggerId for tracking
+```
+
+Exports `dispatch()` and `walkDir()` with injectable S3/SQS clients for testability. CLI entry checks AWS credentials early via `HeadBucketCommand`.
+
+### Intake Planning Download
+
+When `StageMessage.context.planningPrefix` is present, the intake stage downloads pre-uploaded planning artifacts before research begins:
+
+```
+handleIntakeStage (Step 1.5 -- conditional)
+  1. Validate planningPrefix format: /^triggers\/[0-9a-f-]{36}\/planning\/$/
+     (prevents path traversal -- T-04-01)
+  2. ListObjectsV2 under trigger prefix (paginated)
+  3. For each object: GetObject + PutObject to runs/{runId}/planning/{relativePath}
+  4. Log copiedCount via structured JSON
+  5. Track hasPlanningContext: true in pipeline_started analytics event
+```
+
+When planningPrefix is absent, intake behaves exactly as before (no S3 calls).
+
+### Auto-Decider Agent (`agents/auto-decider.md`)
+
+An agent definition spawned by PhaseRunner during the auto-decide lifecycle step. Reads phase planning artifacts, classifies decisions, and either makes them autonomously or escalates to Slack.
+
+**Decision classification rubric:**
+
+| Category | Risk Level | Action |
+|----------|-----------|--------|
+| Naming, file placement, formatting | Routine | Decide + log to DECISIONS.md |
+| Implementation approach within patterns | Routine | Decide + log with confidence |
+| Architecture changes (multi-subsystem) | High-risk | Escalate to Slack |
+| New external dependencies | High-risk | Escalate to Slack |
+| Scope changes from approved plan | High-risk | Escalate to Slack |
+| Security-sensitive (auth, crypto, secrets) | High-risk | Escalate to Slack |
+
+**Output:** DECISIONS.md audit trail (written to `.planning/phases/{phase}/`) + escalation JSON on stdout.
+
+### PhaseRunner Integration (`sdk/src/phase-runner.ts`)
+
+The auto-decide step is wired as **Step 3.7** in the PhaseRunner lifecycle, between plan-check (Step 3.5) and execute (Step 4):
+
+```
+PhaseRunner.run()
+  Step 1: Discuss
+  Step 2: Research
+  Step 3: Plan
+  Step 3.5: Plan Check
+  Step 3.7: Auto-Decide (NEW)     ◄── runAutoDecideStep()
+  Step 4: Execute
+  Step 5: Verify
+  Step 6: Advance
+```
+
+Key design decisions:
+- **Non-fatal**: Auto-decide failure logs a warning and continues. The pipeline proceeds without auto-decisions.
+- **Config gated**: `this.config.workflow.auto_decide !== false` (enabled by default)
+- **Retry**: Uses `retryOnce()` wrapper, same as other steps
+
+### Slack Escalation (`src/cloud/integrations/slack.ts`)
+
+`sendEscalationMessage()` follows the same pattern as `sendApprovalMessage()` but with escalation-specific action IDs:
+
+| Action ID | Button | Effect |
+|-----------|--------|--------|
+| `escalation_approve` | "Approve Decision" (primary) | Resume pipeline at current stage |
+| `escalation_reject` | "Reject Decision" (danger) | Mark pipeline failed |
+
+### Webhook Handler Extension (`src/cloud/webhook/slack-handler.ts`)
+
+The handler now accepts four action IDs via a `KNOWN_ACTIONS` array:
+
+```
+KNOWN_ACTIONS = ['pipeline_approve', 'pipeline_reject', 'escalation_approve', 'escalation_reject']
+```
+
+**Approval type discrimination for stage resume:**
+- `plan_approval` → advance to `NEXT_STAGE[Approve]` (the execute stage)
+- `risk_escalation` → resume at the **current** stage (re-enter auto-decide)
+
+This distinction relies on the `approval_type` column added by migration 004 and returned by `getApprovalByToken()`.
+
+### Type Extensions
+
+| Type | Change | Purpose |
+|------|--------|---------|
+| `PipelineJobMessage` | Added `planningPrefix?: string` | S3 key prefix for pre-uploaded planning artifacts |
+| `StageMessage.context` | Added `planningPrefix?: string` | Propagated through stage-to-stage progression |
+| `PhaseStepType` | Added `AutoDecide = 'auto_decide'` | Lifecycle step between PlanCheck and Execute |
+| `PhaseType` | Added `AutoDecide = 'auto-decide'` | Agent definition and tool scoping mapping |
+| `insertApproval()` | Added `approvalType` parameter | Discriminates plan approval vs risk escalation |
+| `getApprovalByToken()` | Returns `approvalType` field | Webhook handler reads approval type for routing |
+
+### Database Migration (`scripts/migrate-004-approval-type.sql`)
+
+```sql
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS approval_type TEXT NOT NULL DEFAULT 'plan_approval';
+CREATE INDEX IF NOT EXISTS idx_approvals_type ON approvals(approval_type);
+```
+
+Existing rows default to `'plan_approval'` for backward compatibility.
+
+### Test Coverage (Phase 4)
+
+| Test File | Tests | What it covers |
+|-----------|-------|----------------|
+| `stage-router.test.ts` | +2 | planningPrefix forwarding (present and absent) |
+| `escalation.test.ts` | 4 | sendEscalationMessage Block Kit, action_ids, error handling |
+| `auto-decider.test.ts` | 5 | PhaseStepType enum, agent def loading, DECISIONS.md format |
+| `cah-dispatch.test.ts` | 8 | S3 upload, SQS send, path traversal, empty dir, walkDir |
+| `intake-planning.test.ts` | 7 | Planning download, format validation, S3 error wrapping, analytics |
+
+24 new tests across Phase 4 (220 total including Phases 1-3).
 
 ---
 
@@ -237,8 +450,11 @@ infra/
 │       ├── storage.ts               S3 bucket
 │       ├── database.ts              RDS Postgres + Secrets Manager
 │       ├── messaging.ts             SQS queue + DLQ
-│       └── iam.ts                   IAM user + policy
-└── test/cah-stack.test.ts           27 CDK assertion tests
+│       ├── iam.ts                   IAM user + policy
+│       ├── pipeline-lambda.ts       Stage router Lambda + stage queue (Phase 2)
+│       └── slack-webhook.ts         API Gateway + webhook Lambda (Phase 3)
+├── lambda/slack-webhook/index.js    Webhook handler placeholder
+└── test/cah-stack.test.ts           CDK assertion tests
 ```
 
 #### Resource Details
@@ -260,10 +476,12 @@ CahStack
   ├── CahStorage (bucket)
   ├── CahDatabase (vpc) ──► uses vpc from Networking
   ├── CahMessaging (queue, dlq)
-  └── CahIam (user, policy) ──► scoped to bucket ARN, queue ARN, secret ARN
+  ├── CahIam (user, policy) ──► scoped to bucket ARN, queue ARN, secret ARN
+  ├── CahPipelineLambda ──► stage queue, Lambda, SG with DB ingress (Phase 2)
+  └── CahSlackWebhook ──► API Gateway HTTP API + webhook Lambda (Phase 3)
 ```
 
-Stack outputs: `BucketName`, `DbEndpoint`, `QueueUrl`, `SecretArn`.
+Stack outputs: `BucketName`, `DbEndpoint`, `QueueUrl`, `SecretArn`, `SlackWebhookUrl`.
 
 ### Cloud Service Clients (`src/cloud/`)
 
@@ -271,16 +489,19 @@ TypeScript modules that agent code uses to interact with deployed infrastructure
 
 ```
 src/cloud/
-├── types.ts                         Shared domain types
+├── types.ts                         Shared domain types (PipelineJobMessage, PipelineRun, AgentRun, etc.)
 ├── daytona-client.ts                Sandbox lifecycle manager
 ├── s3-artifacts.ts                  Artifact upload/download/list
-├── postgres-client.ts               Connection pool + typed queries
+├── postgres-client.ts               Connection pool + typed queries (including approval functions)
 ├── sqs-consumer.ts                  Job message consumer
-└── test/                            41 unit tests (mocked externals)
-    ├── daytona-client.test.ts
-    ├── s3-artifacts.test.ts
-    ├── postgres-client.test.ts
-    └── sqs-consumer.test.ts
+├── analytics.ts                     PostHog event tracking utility
+├── pipeline/                        Stage router + 7 stage handlers + checkpoint/resume
+├── entrypoint/                      Agent entrypoint + S3 context sync
+├── snapshot/                        Daytona image builder + snapshot manager
+├── integrations/                    Slack, GitHub, Linear SDK wrappers
+├── webhook/                         Slack webhook handler (approval + escalation)
+├── dispatch/                        CLI dispatch (S3 upload + SQS trigger)
+└── test/                            220 unit tests across 23 files
 ```
 
 #### `types.ts` -- Domain Types
@@ -292,7 +513,7 @@ src/cloud/
 | `AgentTaskConfig` | Input to Daytona: repo URL, branch, env vars, command, timeout, resources |
 | `AgentTaskResult` | Output from Daytona: exit code, stdout, duration |
 | `ArtifactKey` | S3 path components: run ID, phase, file name |
-| `PipelineJobMessage` | SQS message payload: project, repo, branch, feature description |
+| `PipelineJobMessage` | SQS message payload: project, repo, branch, feature description, optional planningPrefix (Phase 4) |
 
 #### `daytona-client.ts` -- Sandbox Lifecycle
 
@@ -374,6 +595,30 @@ agent_runs
 
 Indexes on `agent_runs(pipeline_run_id)`, `agent_runs(status)`, `pipeline_runs(status)`.
 
+Additional tables and columns added by later migrations:
+
+```
+approvals (migrate-003)
+  id                UUID (PK)
+  pipeline_run_id   UUID (FK -> pipeline_runs)
+  token             UUID (unique -- used for webhook validation)
+  status            TEXT (pending | approved | rejected)
+  approval_type     TEXT DEFAULT 'plan_approval' (migrate-004: plan_approval | risk_escalation)
+  slack_channel     TEXT
+  slack_message_ts  TEXT
+  requested_at      TIMESTAMPTZ
+  resolved_at       TIMESTAMPTZ
+
+pipeline_runs additions (migrate-002, migrate-003):
+  current_stage     TEXT (checkpoint/resume tracking)
+  task_key          on agent_runs (unique partial index for idempotency)
+  repo_url          TEXT
+  branch            TEXT
+  feature_description TEXT
+```
+
+Indexes: `idx_approvals_type ON approvals(approval_type)`.
+
 ### End-to-End Validation (`scripts/validate-phase1.ts`)
 
 A runnable script that proves the full chain works against deployed infrastructure. Requires real AWS credentials and service endpoints. Tests:
@@ -389,10 +634,10 @@ A runnable script that proves the full chain works against deployed infrastructu
 
 | Project | Scope | What it covers |
 |---------|-------|----------------|
-| `unit` | `sdk/src/**/*.test.ts` | Existing SDK unit tests |
-| `integration` | `sdk/src/**/*.integration.test.ts` | Existing SDK integration tests |
-| `infra-unit` | `infra/test/**/*.test.ts` | CDK assertion tests (27 tests) |
-| `cloud-unit` | `src/cloud/test/**/*.test.ts` | Cloud client unit tests (41 tests) |
+| `unit` | `sdk/src/**/*.test.ts` | SDK unit tests (1086 tests) |
+| `integration` | `sdk/src/**/*.integration.test.ts` | SDK integration tests |
+| `infra-unit` | `infra/test/**/*.test.ts` | CDK assertion tests |
+| `cloud-unit` | `src/cloud/test/**/*.test.ts` | Cloud unit tests (220 tests across 23 files) |
 | `cloud-integration` | `src/cloud/**/*.integration.test.ts` | Cloud integration tests (future) |
 
 ---
@@ -516,6 +761,10 @@ src/cloud/snapshot/
 | Slack webhook HMAC (not VPC) | Public API Gateway + HMAC-SHA256 signature verification | Slack servers must reach the callback URL -- no VPC peering option. HMAC + replay protection (5-min window) + timing-safe comparison is Slack's recommended auth model. |
 | Postgres approval tokens (not Step Functions callbacks) | UUID token in `approvals` table, webhook validates and re-enqueues SQS | Keeps the pipeline stateless between stages. No long-lived Step Functions execution to manage. Webhook Lambda owns resumption. |
 | Thin PostHog utility (not abstraction layer) | ~20-30 line wrapper: init, track(), flush() | Lambda-specific config (`flushAt: 1`, `flushInterval: 0`). Each stage calls `track()` directly. Can grow if needed but starts minimal. |
+| Non-fatal auto-decide | Failure logs warning + continues | Pipeline must not block on auto-decision failures. Decisions fall back to executor or interactive mode. |
+| CLI dispatch (not API Gateway) | S3 upload + SQS send from local CLI | Reuses existing S3/SQS primitives. No new infra needed. Trigger prefix separates pre-run artifacts from run artifacts. |
+| Approval type column (not separate tables) | `approval_type TEXT DEFAULT 'plan_approval'` on existing `approvals` table | Single table simplifies webhook handler. Default value ensures backward compatibility with existing rows. |
+| planningPrefix forwarding | Optional field threaded through PipelineJobMessage → StageMessage.context | Backward compatible. Intake only fires S3 download when prefix is present. Existing pipelines unaffected. |
 
 ---
 
@@ -534,8 +783,12 @@ src/cloud/snapshot/
 | Lambda -> RDS | Network access | Lambda in PRIVATE_ISOLATED subnets; dedicated security group with port 5432 ingress only |
 | Lambda concurrency | Runaway invocations | Reserved concurrency 10; stage DLQ maxReceiveCount 3 |
 | Sandbox stdout -> orchestrator | Malformed output injection | JSON parse wrapped in try/catch; fallback to exit code on parse failure |
-| Slack webhook (Phase 3) | Forged callback / replay | HMAC-SHA256 via `timingSafeEqual`; 5-min timestamp window; approval token validated in Postgres |
+| Slack webhook | Forged callback / replay | HMAC-SHA256 via `timingSafeEqual`; 5-min timestamp window; approval token validated in Postgres |
 | Slack webhook -> SQS | Unauthorized pipeline resume | SQS message only sent on valid approval; IAM restricts Lambda to SendMessage on stage queue only |
+| CLI -> S3 (planningPrefix) | Path traversal via malicious prefix | Intake validates format with `/^triggers\/[0-9a-f-]{36}\/planning\/$/` regex; rejects non-conforming values with PipelineError |
+| CLI -> S3 (file upload) | Path traversal via `..` in filenames | `cah-dispatch` rejects any file path containing `..` before upload |
+| Auto-decider -> pipeline | LLM making security-sensitive decisions routinely | Agent prompt mandates escalation for auth, crypto, secrets, dependency additions. Default-routine bias logs with lower confidence. |
+| Escalation approval token | Double-resolution / replay | Existing `WHERE status = 'pending'` guard in `resolveApproval()` prevents double-resolution for both approval types |
 
 ---
 
@@ -543,11 +796,7 @@ src/cloud/snapshot/
 
 | Component | Phase | Status | Purpose |
 |-----------|-------|--------|---------|
-| Slack approval | 3 | Planned (wave 1-3) | Block Kit approve/reject buttons, webhook Lambda for pipeline resume |
-| GitHub PR delivery | 3 | Planned (wave 2) | Feature branch, task branches, merge executor, structured PR |
-| Linear tracking | 3 | Planned (wave 1-2) | Parent ticket at intake, sub-tickets per phase, status at transitions |
-| PostHog events | 3 | Planned (wave 1-2) | Pipeline events, agent run cost/tokens, stage transitions |
-| Auto-decision agent | 4 | Not started | LLM handles routine decisions, escalates high-risk to Slack |
+| PostHog run dashboard | 5 | Not started | Current phase, cumulative cost, completion status for any pipeline run |
 | CLI status queries | 5 | Not started | `cah status`, `cah runs`, `cah run <id>` |
 | Per-agent telemetry | 5 | Not started | Tool calls, output references, token usage in Postgres |
 
@@ -564,4 +813,4 @@ src/cloud/snapshot/
 
 ---
 
-*Last updated: 2026-04-16 (Phase 2 complete, Phase 3 planned)*
+*Last updated: 2026-04-17 (Phases 1-4 complete, Phase 5 planned)*
