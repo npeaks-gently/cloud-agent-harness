@@ -140,6 +140,7 @@ function jobMessageToIntakeStageMessage(job: PipelineJobMessage): StageMessage {
       phaseNumber: 1,
       phaseTotal: 1,
       previousArtifacts: [],
+      planningPrefix: job.planningPrefix,
     },
   };
 }
