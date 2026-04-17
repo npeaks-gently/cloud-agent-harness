@@ -223,6 +223,7 @@ export enum PhaseType {
   Execute = 'execute',
   Verify = 'verify',
   Repair = 'repair',
+  AutoDecide = 'auto-decide',
 }
 
 /**

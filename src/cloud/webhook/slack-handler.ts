@@ -151,12 +151,16 @@ export async function handleSlackAction(
 
   // Step 3: Extract action
   const action = payload.actions?.[0];
-  if (!action || !['pipeline_approve', 'pipeline_reject'].includes(action.action_id)) {
+  const KNOWN_ACTIONS = [
+    'pipeline_approve', 'pipeline_reject',
+    'escalation_approve', 'escalation_reject',
+  ];
+  if (!action || !KNOWN_ACTIONS.includes(action.action_id)) {
     return { statusCode: 400, body: 'Unknown action' };
   }
 
   const token = action.value;
-  const isApproval = action.action_id === 'pipeline_approve';
+  const isApproval = action.action_id === 'pipeline_approve' || action.action_id === 'escalation_approve';
   const resolvedBy = payload.user?.username ?? 'unknown';
 
   // Step 4: Validate token
@@ -196,10 +200,21 @@ export async function handleSlackAction(
     const stageQueueUrl = process.env.STAGE_QUEUE_URL;
     if (!stageQueueUrl) throw new Error('STAGE_QUEUE_URL not set');
 
-    const nextStage = NEXT_STAGE[PipelineStage.Approve];
-    if (!nextStage) throw new Error('No stage after Approve');
+    // Determine resume stage based on approval type:
+    // - risk_escalation: resume at current stage (re-enter auto-decide)
+    // - plan_approval: advance to next stage after Approve
+    let nextStage: PipelineStage;
+    if (approval.approvalType === 'risk_escalation') {
+      // Escalation: resume at the current stage the pipeline was executing
+      nextStage = (pipelineRun.config.currentStage as PipelineStage) ?? PipelineStage.Execute;
+    } else {
+      // Plan approval: advance to next stage
+      const ns = NEXT_STAGE[PipelineStage.Approve];
+      if (!ns) throw new Error('No stage after Approve');
+      nextStage = ns;
+    }
 
-    // Build StageMessage for the next stage (Execute)
+    // Build StageMessage for the resume stage
     // Read from dedicated PipelineRun columns, not the JSON config blob
     const nextMsg: StageMessage = {
       runId: approval.pipelineRunId,

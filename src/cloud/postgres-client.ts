@@ -362,9 +362,10 @@ export async function getApprovalByToken(
   status: string;
   slackChannel: string | null;
   requestedAt: Date;
+  approvalType: string;
 } | null> {
   const sql = `
-    SELECT id, pipeline_run_id, status, slack_channel, requested_at
+    SELECT id, pipeline_run_id, status, slack_channel, requested_at, approval_type
     FROM approvals
     WHERE token = $1
   `;
@@ -379,6 +380,7 @@ export async function getApprovalByToken(
       status: row.status as string,
       slackChannel: row.slack_channel as string | null,
       requestedAt: new Date(row.requested_at as string),
+      approvalType: (row.approval_type as string) ?? 'plan_approval',
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
