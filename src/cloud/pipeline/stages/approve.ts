@@ -68,7 +68,7 @@ export async function handleApproveStage(
   }
 
   try {
-    await insertApproval(pool, msg.runId, token, channel, messageTs);
+    await insertApproval(pool, msg.runId, token, channel, messageTs, 'plan_approval');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new PipelineError(

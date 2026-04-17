@@ -104,6 +104,7 @@ describe('handleApproveStage', () => {
       FIXED_TOKEN,
       'C12345',
       '1234567890.123456',
+      'plan_approval',
     );
   });
 
