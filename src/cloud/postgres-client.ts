@@ -97,6 +97,7 @@ function mapRowToPipelineRun(row: Record<string, unknown>): PipelineRun {
     repoUrl: (row.repo_url as string) ?? '',
     branch: (row.branch as string) ?? '',
     featureDescription: (row.feature_description as string) ?? '',
+    currentStage: row.current_stage as string | undefined,
     featureBranch: row.feature_branch as string | undefined,
     linearParentTicketId: row.linear_parent_ticket_id as string | undefined,
     createdAt: new Date(row.created_at as string),

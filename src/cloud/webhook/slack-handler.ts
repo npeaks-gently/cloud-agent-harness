@@ -206,7 +206,7 @@ export async function handleSlackAction(
     let nextStage: PipelineStage;
     if (approval.approvalType === 'risk_escalation') {
       // Escalation: resume at the current stage the pipeline was executing
-      nextStage = (pipelineRun.config.currentStage as PipelineStage) ?? PipelineStage.Execute;
+      nextStage = (pipelineRun.currentStage as PipelineStage) ?? PipelineStage.Execute;
     } else {
       // Plan approval: advance to next stage
       const ns = NEXT_STAGE[PipelineStage.Approve];
