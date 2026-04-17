@@ -12,6 +12,12 @@
  */
 
 import type { Pool } from 'pg';
+import {
+  S3Client,
+  ListObjectsV2Command,
+  GetObjectCommand,
+  PutObjectCommand,
+} from '@aws-sdk/client-s3';
 import { PipelineStage, PipelineError, type StageMessage, type StageResult } from '../types.js';
 import { parseRepoUrl } from '../utils.js';
 import { createFeatureBranch } from '../../integrations/github.js';
@@ -80,6 +86,86 @@ export async function handleIntakeStage(
     );
   }
 
+  // Step 1.5: Download pre-uploaded planning artifacts (D-13)
+  if (msg.context.planningPrefix) {
+    // Validate planningPrefix format (T-04-01: prevent path traversal)
+    const prefixPattern = /^triggers\/[0-9a-f-]{36}\/planning\/$/;
+    if (!prefixPattern.test(msg.context.planningPrefix)) {
+      throw new PipelineError(
+        `Invalid planningPrefix format: ${msg.context.planningPrefix}`,
+        'handleIntakeStage',
+        PipelineStage.Intake,
+      );
+    }
+
+    try {
+      const bucket = process.env.CAH_ARTIFACT_BUCKET;
+      if (!bucket) {
+        throw new Error('CAH_ARTIFACT_BUCKET environment variable is not set');
+      }
+
+      const s3 = new S3Client({ region: 'us-east-1' });
+      let continuationToken: string | undefined;
+      let copiedCount = 0;
+
+      // List all objects under the trigger prefix and copy to runs/{runId}/planning/
+      do {
+        const response = await s3.send(
+          new ListObjectsV2Command({
+            Bucket: bucket,
+            Prefix: msg.context.planningPrefix,
+            ContinuationToken: continuationToken,
+          }),
+        );
+
+        for (const obj of response.Contents ?? []) {
+          const key = obj.Key;
+          if (!key || key.length <= msg.context.planningPrefix.length) continue;
+
+          const relativePath = key.slice(msg.context.planningPrefix.length);
+          const destKey = `runs/${msg.runId}/planning/${relativePath}`;
+
+          // Download from trigger prefix and re-upload to run prefix
+          const getResponse = await s3.send(
+            new GetObjectCommand({ Bucket: bucket, Key: key }),
+          );
+          if (!getResponse.Body) continue;
+
+          const bytes = await getResponse.Body.transformToByteArray();
+          await s3.send(
+            new PutObjectCommand({
+              Bucket: bucket,
+              Key: destKey,
+              Body: Buffer.from(bytes),
+              ChecksumAlgorithm: 'SHA256',
+            }),
+          );
+          copiedCount++;
+        }
+
+        continuationToken = response.IsTruncated
+          ? response.NextContinuationToken
+          : undefined;
+      } while (continuationToken);
+
+      console.log(JSON.stringify({
+        level: 'info',
+        message: 'Planning artifacts copied from trigger prefix to run prefix',
+        runId: msg.runId,
+        planningPrefix: msg.context.planningPrefix,
+        copiedCount,
+      }));
+    } catch (err) {
+      if (err instanceof PipelineError) throw err;
+      const message = err instanceof Error ? err.message : String(err);
+      throw new PipelineError(
+        `Failed to download planning artifacts: ${message}`,
+        'handleIntakeStage',
+        PipelineStage.Intake,
+      );
+    }
+  }
+
   // Step 2: Create feature branch on GitHub (D-05)
   const { owner, repo } = parseRepoUrl(msg.repoUrl, 'handleIntakeStage', PipelineStage.Intake);
   const shortRunId = msg.runId.slice(0, 8);
@@ -141,6 +227,7 @@ export async function handleIntakeStage(
     stage: PipelineStage.Intake,
     featureBranch,
     linearParentTicketId,
+    hasPlanningContext: !!msg.context.planningPrefix,
   });
 
   // Step 5: Enrich msg.context so downstream stages have branch and ticket
