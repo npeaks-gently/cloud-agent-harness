@@ -318,13 +318,16 @@ export async function updateAgentRun(
  * @param approvalType - Type of approval ('plan_approval' or 'risk_escalation'), defaults to 'plan_approval'
  * @returns Generated UUID for the new approval row
  */
+/** Known approval types for the Slack approval gate. */
+export type ApprovalType = 'plan_approval' | 'risk_escalation';
+
 export async function insertApproval(
   pool: Pool,
   pipelineRunId: string,
   token: string,
   slackChannel: string,
   slackMessageTs: string,
-  approvalType: string = 'plan_approval',
+  approvalType: ApprovalType = 'plan_approval',
 ): Promise<string> {
   const sql = `
     INSERT INTO approvals (pipeline_run_id, token, slack_channel, slack_message_ts, approval_type)
@@ -363,7 +366,7 @@ export async function getApprovalByToken(
   status: string;
   slackChannel: string | null;
   requestedAt: Date;
-  approvalType: string;
+  approvalType: ApprovalType;
 } | null> {
   const sql = `
     SELECT id, pipeline_run_id, status, slack_channel, requested_at, approval_type
@@ -381,7 +384,7 @@ export async function getApprovalByToken(
       status: row.status as string,
       slackChannel: row.slack_channel as string | null,
       requestedAt: new Date(row.requested_at as string),
-      approvalType: (row.approval_type as string) ?? 'plan_approval',
+      approvalType: (row.approval_type as ApprovalType) ?? 'plan_approval',
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
