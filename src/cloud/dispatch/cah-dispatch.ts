@@ -26,6 +26,7 @@ import { S3Client, PutObjectCommand, HeadBucketCommand } from '@aws-sdk/client-s
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -233,8 +234,8 @@ async function main(): Promise<void> {
   console.log(`Planning prefix: ${result.planningPrefix}`);
 }
 
-// Run main only when executed directly
-const isDirectRun = process.argv[1]?.includes('cah-dispatch');
+// Run main only when executed directly (standard ESM direct-run detection)
+const isDirectRun = process.argv[1] === fileURLToPath(import.meta.url);
 if (isDirectRun) {
   main().catch((err) => {
     console.error(`Dispatch failed: ${err instanceof Error ? err.message : String(err)}`);
