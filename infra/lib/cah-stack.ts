@@ -91,16 +91,16 @@ export class CahStack extends cdk.Stack {
 
     // --- Slack Webhook ----------------------------------------------------------
 
-    const slackSigningSecret = secretsmanager.Secret.fromSecretNameV2(
+    const slackSigningSecret = secretsmanager.Secret.fromSecretCompleteArn(
       this,
       'SlackSigningSecret',
-      `${PREFIX}-slack-signing-secret`,
+      'arn:aws:secretsmanager:us-east-1:659828095854:secret:cah-dev-slack-signing-secret-dAlcJ9',
     );
 
-    const slackBotToken = secretsmanager.Secret.fromSecretNameV2(
+    const slackBotToken = secretsmanager.Secret.fromSecretCompleteArn(
       this,
       'SlackBotToken',
-      `${PREFIX}-slack-bot-token`,
+      'arn:aws:secretsmanager:us-east-1:659828095854:secret:cah-dev-slack-bot-token-VPynMv',
     );
 
     const slackWebhook = new CahSlackWebhook(this, 'SlackWebhook', {

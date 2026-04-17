@@ -131,8 +131,8 @@ export class CahSlackWebhook extends Construct {
         effect: iam.Effect.ALLOW,
         actions: ['secretsmanager:GetSecretValue'],
         resources: [
-          `${props.slackSigningSecret.secretArn}-*`,
-          `${props.slackBotToken.secretArn}-*`,
+          props.slackSigningSecret.secretArn,
+          props.slackBotToken.secretArn,
           props.dbSecretArn,
         ],
       }),
