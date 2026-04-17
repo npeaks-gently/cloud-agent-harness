@@ -123,14 +123,16 @@ export class CahSlackWebhook extends Construct {
     );
 
     // Secrets Manager -- Slack signing secret, bot token, and DB credentials (T-03-16, T-03-17)
+    // fromSecretNameV2 produces ARNs without the 6-char random suffix that
+    // Secrets Manager appends. Append -?????? wildcard so IAM matches the real ARN.
     role.addToPolicy(
       new iam.PolicyStatement({
         sid: 'SecretsManagerAccess',
         effect: iam.Effect.ALLOW,
         actions: ['secretsmanager:GetSecretValue'],
         resources: [
-          props.slackSigningSecret.secretArn,
-          props.slackBotToken.secretArn,
+          `${props.slackSigningSecret.secretArn}-??????`,
+          `${props.slackBotToken.secretArn}-??????`,
           props.dbSecretArn,
         ],
       }),
