@@ -207,8 +207,9 @@ async function main(): Promise<void> {
   }
 
   // Pitfall 6: Check AWS credentials early (T-04-11)
+  // Reuse this S3Client in dispatch() to avoid creating a second client
+  const s3 = new S3Client({ region: DEFAULT_REGION });
   try {
-    const s3 = new S3Client({ region: DEFAULT_REGION });
     await s3.send(new HeadBucketCommand({ Bucket: bucket }));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -227,7 +228,7 @@ async function main(): Promise<void> {
     featureDescription,
     bucket,
     queueUrl,
-  });
+  }, s3);
 
   console.log(`Dispatch complete. Trigger ID: ${result.triggerId}`);
   console.log(`Files uploaded: ${result.filesUploaded}`);
