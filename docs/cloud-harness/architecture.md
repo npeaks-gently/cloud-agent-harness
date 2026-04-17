@@ -60,6 +60,152 @@ When complete, the system has four layers:
 
 Agents never communicate directly. They read/write artifacts through S3 and the orchestrator sequences who runs when. This preserves the proven file-artifact communication pattern from the local GSD harness.
 
+### End-to-End Control Flow
+
+This traces the full lifecycle of a feature request from user input to delivered PR.
+
+```
+ DEVELOPER (local machine)
+ ─────────────────────────
+     │
+     │  1. /gsd-discuss-phase
+     │     Interactive questioning → .planning/ artifacts
+     │
+     │  2. cah-dispatch --project-id X --repo-url Y --branch Z --description "..."
+     │     │
+     │     ├── Walk .planning/ directory
+     │     ├── Upload each file → S3: triggers/{triggerId}/planning/{path}
+     │     └── Send PipelineJobMessage → SQS Job Queue
+     │              │
+ ════╪══════════════╪═══════════════════════════════════════════════════════════
+     │              │
+ CLOUD              ▼
+ ─────    ┌─────────────────────────────────────────────────────────────┐
+          │              STAGE ROUTER LAMBDA                            │
+          │  (consumes from Job Queue + Stage Queue)                   │
+          │                                                             │
+          │  ┌──────────────────────────────────────────────────────┐   │
+          │  │  INTAKE                                              │   │
+          │  │  • Create pipeline_run row (Postgres)                │   │
+          │  │  • Create feature branch: cah/{runId}/{slug}         │   │
+          │  │  • Create Linear parent ticket                       │   │
+          │  │  • If planningPrefix: download .planning/ from S3    │   │
+          │  │  • track('pipeline_started')                         │   │
+          │  └──────────────────────┬───────────────────────────────┘   │
+          │                         │ SQS → Stage Queue                 │
+          │                         ▼                                   │
+          │  ┌──────────────────────────────────────────────────────┐   │
+          │  │  RESEARCH                                            │   │
+          │  │  • Dispatch research agent → Daytona sandbox         │   │
+          │  │    ┌─────────────────────────────────────────┐       │   │
+          │  │    │ Sandbox: clone repo, download .planning/│       │   │
+          │  │    │ SDK: gsd.runPhase('research')           │       │   │
+          │  │    │ Upload artifacts → S3, git push         │       │   │
+          │  │    └─────────────────────────────────────────┘       │   │
+          │  │  • Write checkpoint (Postgres)                       │   │
+          │  └──────────────────────┬───────────────────────────────┘   │
+          │                         │ SQS                               │
+          │                         ▼                                   │
+          │  ┌──────────────────────────────────────────────────────┐   │
+          │  │  PLAN                                                │   │
+          │  │  • Dispatch planning agent → Daytona sandbox         │   │
+          │  │  • Agent creates PLAN.md files with tasks            │   │
+          │  │  • Write checkpoint                                  │   │
+          │  └──────────────────────┬───────────────────────────────┘   │
+          │                         │ SQS                               │
+          │                         ▼                                   │
+          │  ┌──────────────────────────────────────────────────────┐   │
+          │  │  APPROVE                                             │   │
+          │  │  • Build Block Kit message (approve/reject buttons)  │   │
+          │  │  • Send → Slack channel via @slack/web-api           │   │
+          │  │  • Write pending approval row (UUID token, Postgres) │   │
+          │  │  • Return status: 'paused' ──► router does NOT       │   │
+          │  │    advance; pipeline waits for webhook callback      │   │
+          │  └──────────────────────────────────────────────────────┘   │
+          │                                                             │
+          └─────────────────────────────────────────────────────────────┘
+                                         ║
+                         ┌───────────────╨───────────────┐
+                         │         SLACK                  │
+                         │  User clicks Approve / Reject  │
+                         └───────────────╥───────────────┘
+                                         ║
+          ┌──────────────────────────────╨──────────────────────────────┐
+          │              SLACK WEBHOOK LAMBDA                           │
+          │  (API Gateway → Lambda)                                    │
+          │                                                             │
+          │  • Verify HMAC-SHA256 signature (timingSafeEqual)          │
+          │  • Check timestamp < 5 min (replay protection)             │
+          │  • Validate approval token in Postgres                     │
+          │  •──── If APPROVE ────────────────────────────────────     │
+          │  │  Resolve approval, update pipeline → 'running'          │
+          │  │  If plan_approval:  SQS → Execute stage (next stage)    │
+          │  │  If risk_escalation: SQS → current stage (re-enter)     │
+          │  •──── If REJECT ─────────────────────────────────────     │
+          │  │  Mark pipeline → 'rejected', notify                     │
+          │  └─────────────────────────────────────────────────────     │
+          └──────────────────────────────╥──────────────────────────────┘
+                                         │ SQS → Stage Queue
+          ┌──────────────────────────────▼──────────────────────────────┐
+          │              STAGE ROUTER LAMBDA (resumed)                  │
+          │                                                             │
+          │  ┌──────────────────────────────────────────────────────┐   │
+          │  │  EXECUTE                                             │   │
+          │  │  • For each plan (sequentially):                     │   │
+          │  │    ┌─────────────────────────────────────────┐       │   │
+          │  │    │ Sandbox: clone repo, download .planning/│       │   │
+          │  │    │ SDK PhaseRunner.run():                  │       │   │
+          │  │    │   Step 3.5: Plan Check                  │       │   │
+          │  │    │   Step 3.7: Auto-Decide ◄── NEW        │       │   │
+          │  │    │     ├─ Routine → log DECISIONS.md       │       │   │
+          │  │    │     └─ High-risk → Slack escalation ────┼──►    │   │
+          │  │    │   Step 4: Execute tasks                 │  Slack │   │
+          │  │    │   Step 5: Verify                        │  (may  │   │
+          │  │    │ Upload artifacts → S3, git push         │  pause)│   │
+          │  │    └─────────────────────────────────────────┘       │   │
+          │  │  • Skip completed plans (idempotency keys)           │   │
+          │  │  • Write checkpoint per plan                         │   │
+          │  └──────────────────────┬───────────────────────────────┘   │
+          │                         │ SQS                               │
+          │                         ▼                                   │
+          │  ┌──────────────────────────────────────────────────────┐   │
+          │  │  VERIFY                                              │   │
+          │  │  • Dispatch verifier agent → Daytona sandbox         │   │
+          │  │  • Agent checks must_haves, runs tests               │   │
+          │  │  • Write checkpoint                                  │   │
+          │  └──────────────────────┬───────────────────────────────┘   │
+          │                         │ SQS                               │
+          │                         ▼                                   │
+          │  ┌──────────────────────────────────────────────────────┐   │
+          │  │  PR                                                  │   │
+          │  │  • Merge task branches → feature branch              │   │
+          │  │  • Create GitHub PR: [CAH] {featureDescription}      │   │
+          │  │  • Attach PR URL to Linear ticket                    │   │
+          │  │  • Mark Linear ticket → 'done'                       │   │
+          │  │  • track('pr_created')                               │   │
+          │  └──────────────────────────────────────────────────────┘   │
+          │                                                             │
+          │  Pipeline complete. All stages tracked in PostHog.         │
+          └─────────────────────────────────────────────────────────────┘
+
+ PERSISTENT STATE (throughout)
+ ─────────────────────────────
+  S3:       runs/{runId}/planning/*     Agent artifacts per stage
+            triggers/{triggerId}/*      Pre-uploaded planning context
+  Postgres: pipeline_runs               Status, stage, config
+            agent_runs                  Per-task idempotency + telemetry
+            approvals                   Pending/resolved approval tokens
+  PostHog:  pipeline_started, stage_completed, agent_run_completed,
+            approval_approved/rejected, pr_created
+```
+
+**Key control flow properties:**
+- **Stages never communicate directly.** Each stage reads from S3/Postgres, writes back, and the router advances via SQS.
+- **Paused is terminal for the router.** The approve stage returns `'paused'` and the router stops. Only the webhook Lambda can resume the pipeline.
+- **Checkpoint at every boundary.** If the pipeline dies, `resumePipeline(runId)` queries the last completed stage and skips completed plans via idempotency keys.
+- **Auto-decide is non-fatal.** If it fails, the pipeline logs a warning and continues to execute without auto-decisions.
+- **Escalation resumes at current stage.** Unlike plan approval (which advances), a risk escalation approval re-enters the same stage so the auto-decide step can continue.
+
 ---
 
 ## Pipeline Architecture (Phase 2)
