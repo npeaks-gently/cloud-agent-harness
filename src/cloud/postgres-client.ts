@@ -314,6 +314,7 @@ export async function updateAgentRun(
  * @param token - Unique approval token (UUID) embedded in Slack buttons
  * @param slackChannel - Slack channel ID where the approval message was sent
  * @param slackMessageTs - Slack message timestamp for updating the message later
+ * @param approvalType - Type of approval ('plan_approval' or 'risk_escalation'), defaults to 'plan_approval'
  * @returns Generated UUID for the new approval row
  */
 export async function insertApproval(
@@ -322,16 +323,17 @@ export async function insertApproval(
   token: string,
   slackChannel: string,
   slackMessageTs: string,
+  approvalType: string = 'plan_approval',
 ): Promise<string> {
   const sql = `
-    INSERT INTO approvals (pipeline_run_id, token, slack_channel, slack_message_ts)
-    VALUES ($1, $2, $3, $4)
+    INSERT INTO approvals (pipeline_run_id, token, slack_channel, slack_message_ts, approval_type)
+    VALUES ($1, $2, $3, $4, $5)
     ON CONFLICT (token) DO NOTHING
     RETURNING id
   `;
 
   try {
-    const result = await pool.query(sql, [pipelineRunId, token, slackChannel, slackMessageTs]);
+    const result = await pool.query(sql, [pipelineRunId, token, slackChannel, slackMessageTs, approvalType]);
     // ON CONFLICT DO NOTHING returns no rows on conflict -- return empty string
     return (result.rows[0]?.id as string) ?? '';
   } catch (err) {

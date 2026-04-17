@@ -85,6 +85,8 @@ export interface StageMessage {
     featureBranch?: string;
     /** Linear parent ticket ID created at intake (Phase 3, D-09). */
     linearParentTicketId?: string;
+    /** S3 key prefix for pre-uploaded planning context (D-13) */
+    planningPrefix?: string;
   };
 }
 

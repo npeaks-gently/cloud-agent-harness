@@ -132,4 +132,6 @@ export interface PipelineJobMessage {
   featureDescription: string;
   /** Optional additional configuration */
   config?: Record<string, unknown>;
+  /** S3 key prefix where pre-uploaded .planning/ artifacts are stored (D-13) */
+  planningPrefix?: string;
 }
