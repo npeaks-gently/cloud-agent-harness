@@ -89,7 +89,7 @@ export async function handleIntakeStage(
   // Step 1.5: Download pre-uploaded planning artifacts (D-13)
   if (msg.context.planningPrefix) {
     // Validate planningPrefix format (T-04-01: prevent path traversal)
-    const prefixPattern = /^triggers\/[0-9a-f-]{36}\/planning\/$/;
+    const prefixPattern = /^triggers\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/planning\/$/;
     if (!prefixPattern.test(msg.context.planningPrefix)) {
       throw new PipelineError(
         `Invalid planningPrefix format: ${msg.context.planningPrefix}`,
