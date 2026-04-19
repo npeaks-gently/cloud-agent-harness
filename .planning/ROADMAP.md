@@ -61,16 +61,19 @@ Plans:
 **Depends on**: Phase 2
 **Requirements**: INTG-01, INTG-02, INTG-03, INTG-04
 **Success Criteria** (what must be TRUE):
-  1. A Slack message with Block Kit approve/reject buttons is sent when the pipeline reaches the approval gate, and clicking approve resumes the Step Functions execution via task token callback
+  1. A Slack message with Block Kit approve/reject buttons is sent when the pipeline reaches the approval gate, and clicking approve resumes the pipeline execution via SQS re-enqueue
   2. The pipeline creates a feature branch, makes atomic commits per task, and opens a PR with a structured description as its final output
   3. Linear ticket status updates at each pipeline phase transition, and the completed PR URL is linked back to the originating Linear ticket
   4. PostHog receives events for agent runs, token usage, cost accrual, pipeline status changes, and phase transitions -- viewable in the PostHog dashboard
-**Plans**: TBD
+**Plans**: 6 plans
 
 Plans:
-- [ ] 03-01: TBD
-- [ ] 03-02: TBD
-- [ ] 03-03: TBD
+- [x] 03-01-PLAN.md — Pipeline types extension, approvals migration, Postgres query functions, and PostHog analytics utility (INTG-01, INTG-04)
+- [x] 03-02-PLAN.md — Slack, GitHub, and Linear integration utility modules with SDK wrappers and tests (INTG-01, INTG-02, INTG-03)
+- [x] 03-03-PLAN.md — Stage handler modifications (approve, intake, PR, stage-router), D-10 sub-ticket lifecycle, and merge executor (INTG-01, INTG-02, INTG-03, INTG-04)
+- [x] 03-04-PLAN.md — Agent entrypoint git push, PostHog agent run tracking, and CDK Slack webhook construct (INTG-01, INTG-02, INTG-04)
+- [x] 03-05-PLAN.md — Slack webhook Lambda handler with signature verification and pipeline resume (INTG-01)
+- [x] 03-06-PLAN.md — Gap closure: Add token usage (inputTokens, outputTokens, cache tokens) to PostHog agent_run_completed event (INTG-04)
 
 ### Phase 4: Headless Pipeline
 **Goal**: The pipeline runs fully autonomously after the initial questioning phase -- an LLM agent makes routine decisions that previously required human input, and high-risk decisions escalate to Slack
@@ -109,6 +112,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 |-------|----------------|--------|-----------|
 | 1. AWS Foundation & Agent Runtime | 3/3 | Complete    | 2026-04-16 |
 | 2. Pipeline Orchestration & State Management | 0/5 | Not started | - |
-| 3. Integrations | 0/3 | Not started | - |
+| 3. Integrations | 0/5 | Not started | - |
 | 4. Headless Pipeline | 0/2 | Not started | - |
 | 5. Observability & CLI | 0/2 | Not started | - |

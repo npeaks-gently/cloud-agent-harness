@@ -22,6 +22,16 @@ export interface PipelineRun {
   phaseTotal: number;
   /** Arbitrary configuration for this run */
   config: Record<string, unknown>;
+  /** Git repository URL (stored in dedicated column at intake) */
+  repoUrl: string;
+  /** Base branch name (stored in dedicated column at intake) */
+  branch: string;
+  /** Human-readable feature description */
+  featureDescription: string;
+  /** Feature branch name created at intake (D-05) */
+  featureBranch?: string;
+  /** Linear parent ticket ID created at intake (D-09) */
+  linearParentTicketId?: string;
   /** When the run was created */
   createdAt: Date;
   /** When the run was last updated */

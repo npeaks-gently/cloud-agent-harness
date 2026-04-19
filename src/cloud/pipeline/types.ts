@@ -81,6 +81,10 @@ export interface StageMessage {
     phaseTotal: number;
     /** S3 artifact keys produced by previous stages */
     previousArtifacts: string[];
+    /** Feature branch name created at intake (Phase 3, D-05). */
+    featureBranch?: string;
+    /** Linear parent ticket ID created at intake (Phase 3, D-09). */
+    linearParentTicketId?: string;
   };
 }
 
@@ -96,7 +100,7 @@ export interface StageResult {
   /** Which stage produced this result */
   stage: PipelineStage;
   /** Overall outcome of the stage */
-  status: 'completed' | 'failed' | 'skipped';
+  status: 'completed' | 'failed' | 'skipped' | 'paused';
   /** Individual agent task outcomes within this stage */
   tasks: AgentTaskOutcome[];
   /** Error message if status is 'failed' */

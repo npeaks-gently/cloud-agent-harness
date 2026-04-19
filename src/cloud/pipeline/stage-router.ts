@@ -26,6 +26,8 @@ import {
   type StageResult,
 } from './types.js';
 import { updatePipelineStage } from './checkpoint.js';
+import { track, flush } from '../analytics.js';
+import { createSubTicket, updateTicketStatus } from '../integrations/linear.js';
 import { handleIntakeStage } from './stages/intake.js';
 import { handleResearchStage } from './stages/research.js';
 import { handlePlanStage } from './stages/plan.js';
@@ -204,9 +206,46 @@ export async function routeStage(
     );
   }
 
-  // Step 3: Dispatch to stage handler
+  // Step 3a: D-10 sub-ticket creation at execute stage entry
+  if (msg.stage === PipelineStage.Execute && msg.context.linearParentTicketId) {
+    try {
+      const phaseName = `Phase ${msg.context.phaseNumber}`;
+      const { ticketId: subTicketId } = await createSubTicket(
+        msg.context.linearParentTicketId,
+        msg.context.phaseNumber,
+        phaseName,
+      );
+      // Update sub-ticket to in_progress
+      await updateTicketStatus(subTicketId, 'in_progress');
+      console.log(JSON.stringify({
+        level: 'info',
+        message: 'Linear sub-ticket created for phase',
+        runId: msg.runId,
+        phaseNumber: msg.context.phaseNumber,
+        subTicketId,
+      }));
+    } catch (err) {
+      // Linear sub-ticket creation is non-critical -- log and continue (T-03-15a)
+      console.log(JSON.stringify({
+        level: 'warn',
+        message: 'Failed to create Linear sub-ticket',
+        runId: msg.runId,
+        error: err instanceof Error ? err.message : String(err),
+      }));
+    }
+  }
+
+  // Step 3b: Dispatch to stage handler
   const handler = STAGE_HANDLERS[msg.stage];
   const result = await handler(msg, pool, client, bucket);
+
+  // Step 3c: PostHog stage tracking (D-14)
+  track('stage_completed', {
+    runId: msg.runId,
+    projectId: msg.projectId,
+    stage: msg.stage,
+    status: result.status,
+  });
 
   // Step 4: Update pipeline state in Postgres
   if (result.status === 'failed') {
@@ -215,9 +254,32 @@ export async function routeStage(
       `UPDATE pipeline_runs SET status = 'failed', current_stage = $1 WHERE id = $2`,
       [msg.stage, msg.runId],
     );
+  } else if (result.status === 'paused') {
+    // D-03: Approve stage returned 'paused' -- do NOT advance pipeline
+    // The Slack webhook Lambda handles re-enqueue on approval
+    await pool.query(
+      `UPDATE pipeline_runs SET current_stage = $1, status = 'paused' WHERE id = $2`,
+      [msg.stage, msg.runId],
+    );
+    // No SQS advance -- webhook Lambda is responsible for resuming
   } else {
     const nextStage = NEXT_STAGE[msg.stage];
     await updatePipelineStage(pool, msg.runId, nextStage);
+
+    // D-10: Update Linear ticket status at stage transitions
+    if (msg.context.linearParentTicketId) {
+      try {
+        await updateTicketStatus(msg.context.linearParentTicketId, 'in_progress');
+      } catch (err) {
+        console.log(JSON.stringify({
+          level: 'warn',
+          message: 'Failed to update Linear ticket status at stage transition',
+          runId: msg.runId,
+          stage: msg.stage,
+          error: err instanceof Error ? err.message : String(err),
+        }));
+      }
+    }
 
     // Step 5: Send next-stage SQS message (if not terminal)
     if (nextStage !== null) {
@@ -241,5 +303,6 @@ export async function routeStage(
     }
   }
 
+  await flush();
   return result;
 }

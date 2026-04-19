@@ -16,6 +16,7 @@ import { CahDatabase } from './constructs/database.js';
 import { CahMessaging } from './constructs/messaging.js';
 import { CahIam } from './constructs/iam.js';
 import { CahPipelineLambda } from './constructs/pipeline-lambda.js';
+import { CahSlackWebhook } from './constructs/slack-webhook.js';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 
 // --- Constants ---------------------------------------------------------------
@@ -88,6 +89,31 @@ export class CahStack extends cdk.Stack {
       anthropicKeySecret,
     });
 
+    // --- Slack Webhook ----------------------------------------------------------
+
+    const slackSigningSecret = secretsmanager.Secret.fromSecretCompleteArn(
+      this,
+      'SlackSigningSecret',
+      'arn:aws:secretsmanager:us-east-1:659828095854:secret:cah-dev-slack-signing-secret-dAlcJ9',
+    );
+
+    const slackBotToken = secretsmanager.Secret.fromSecretCompleteArn(
+      this,
+      'SlackBotToken',
+      'arn:aws:secretsmanager:us-east-1:659828095854:secret:cah-dev-slack-bot-token-VPynMv',
+    );
+
+    const slackWebhook = new CahSlackWebhook(this, 'SlackWebhook', {
+      prefix: PREFIX,
+      vpc: networking.vpc,
+      stageQueueUrl: pipeline.stageQueue.queueUrl,
+      stageQueueArn: pipeline.stageQueue.queueArn,
+      dbSecretArn: database.secret.secretArn,
+      dbSecurityGroup: database.securityGroup,
+      slackSigningSecret,
+      slackBotToken,
+    });
+
     // --- Stack Outputs ---------------------------------------------------------
 
     new cdk.CfnOutput(this, 'BucketName', {
@@ -118,6 +144,11 @@ export class CahStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'StageRouterFnArn', {
       value: pipeline.stageRouterFn.functionArn,
       description: 'Stage router Lambda function ARN',
+    });
+
+    new cdk.CfnOutput(this, 'SlackWebhookUrl', {
+      value: slackWebhook.api.apiEndpoint,
+      description: 'Slack webhook API Gateway URL (configure in Slack app interactivity settings)',
     });
   }
 }

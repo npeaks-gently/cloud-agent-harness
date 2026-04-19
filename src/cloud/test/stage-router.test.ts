@@ -14,6 +14,10 @@ const {
   mockHandlePrStage,
   mockUpdatePipelineStage,
   mockPoolQuery,
+  mockTrack,
+  mockFlush,
+  mockCreateSubTicket,
+  mockUpdateTicketStatus,
 } = vi.hoisted(() => ({
   mockSend: vi.fn(),
   mockHandleIntakeStage: vi.fn(),
@@ -25,6 +29,10 @@ const {
   mockHandlePrStage: vi.fn(),
   mockUpdatePipelineStage: vi.fn(),
   mockPoolQuery: vi.fn(),
+  mockTrack: vi.fn(),
+  mockFlush: vi.fn(),
+  mockCreateSubTicket: vi.fn(),
+  mockUpdateTicketStatus: vi.fn(),
 }));
 
 // --- Module mocks ------------------------------------------------------------
@@ -75,6 +83,16 @@ vi.mock('../pipeline/stages/pr.js', () => ({
 
 vi.mock('../pipeline/checkpoint.js', () => ({
   updatePipelineStage: mockUpdatePipelineStage,
+}));
+
+vi.mock('../analytics.js', () => ({
+  track: mockTrack,
+  flush: mockFlush,
+}));
+
+vi.mock('../integrations/linear.js', () => ({
+  createSubTicket: mockCreateSubTicket,
+  updateTicketStatus: mockUpdateTicketStatus,
 }));
 
 // --- Fixtures ----------------------------------------------------------------
@@ -150,6 +168,11 @@ describe('stage-router', () => {
     mockHandlePrStage.mockReset();
     mockUpdatePipelineStage.mockReset();
     mockPoolQuery.mockReset();
+    mockTrack.mockReset();
+    mockFlush.mockReset();
+    mockFlush.mockResolvedValue(undefined);
+    mockCreateSubTicket.mockReset();
+    mockUpdateTicketStatus.mockReset();
 
     pool = MOCK_POOL as Pool;
     client = MOCK_CLIENT as DaytonaClient;
@@ -395,6 +418,233 @@ describe('stage-router', () => {
         expect(routerErr.operation).toBe('routeStage');
         expect(routerErr.message).toContain('neither StageMessage nor PipelineJobMessage');
       }
+    });
+  });
+
+  // --- Paused status handling --------------------------------------------------
+
+  describe('paused status handling', () => {
+    it('updates pipeline status to paused and does NOT send SQS message when handler returns paused', async () => {
+      const approveMsg = { ...VALID_STAGE_MESSAGE, stage: PipelineStage.Approve };
+      const pausedResult: StageResult = {
+        stage: PipelineStage.Approve,
+        status: 'paused',
+        tasks: [],
+      };
+      mockHandleApproveStage.mockResolvedValueOnce(pausedResult);
+
+      await routeStage(
+        JSON.stringify(approveMsg),
+        pool,
+        client,
+        MOCK_BUCKET,
+        STAGE_QUEUE_URL,
+        sqsClient,
+      );
+
+      // Should update pipeline_runs to 'paused'
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining("status = 'paused'"),
+        [PipelineStage.Approve, 'run-abc-123'],
+      );
+
+      // Should NOT advance via SQS
+      expect(mockSend).not.toHaveBeenCalled();
+
+      // Should NOT call updatePipelineStage
+      expect(mockUpdatePipelineStage).not.toHaveBeenCalled();
+    });
+  });
+
+  // --- D-10 Linear sub-ticket lifecycle --------------------------------------
+
+  describe('D-10 Linear sub-ticket lifecycle', () => {
+    const EXECUTE_MSG_WITH_LINEAR = {
+      ...VALID_STAGE_MESSAGE,
+      stage: PipelineStage.Execute,
+      context: {
+        ...VALID_STAGE_MESSAGE.context,
+        linearParentTicketId: 'linear-parent-123',
+      },
+    };
+
+    it('calls createSubTicket at execute stage entry when linearParentTicketId is present', async () => {
+      const executeResult: StageResult = {
+        stage: PipelineStage.Execute,
+        status: 'completed',
+        tasks: [],
+      };
+      mockHandleExecuteStage.mockResolvedValueOnce(executeResult);
+      mockUpdatePipelineStage.mockResolvedValueOnce(undefined);
+      mockSend.mockResolvedValueOnce({});
+      mockCreateSubTicket.mockResolvedValueOnce({ ticketId: 'sub-ticket-456', identifier: 'CAH-42' });
+      mockUpdateTicketStatus.mockResolvedValue(undefined);
+
+      await routeStage(
+        JSON.stringify(EXECUTE_MSG_WITH_LINEAR),
+        pool,
+        client,
+        MOCK_BUCKET,
+        STAGE_QUEUE_URL,
+        sqsClient,
+      );
+
+      expect(mockCreateSubTicket).toHaveBeenCalledOnce();
+      expect(mockCreateSubTicket).toHaveBeenCalledWith(
+        'linear-parent-123',
+        1,
+        'Phase 1',
+      );
+    });
+
+    it('calls updateTicketStatus in_progress after sub-ticket creation at execute entry', async () => {
+      const executeResult: StageResult = {
+        stage: PipelineStage.Execute,
+        status: 'completed',
+        tasks: [],
+      };
+      mockHandleExecuteStage.mockResolvedValueOnce(executeResult);
+      mockUpdatePipelineStage.mockResolvedValueOnce(undefined);
+      mockSend.mockResolvedValueOnce({});
+      mockCreateSubTicket.mockResolvedValueOnce({ ticketId: 'sub-ticket-456', identifier: 'CAH-42' });
+      mockUpdateTicketStatus.mockResolvedValue(undefined);
+
+      await routeStage(
+        JSON.stringify(EXECUTE_MSG_WITH_LINEAR),
+        pool,
+        client,
+        MOCK_BUCKET,
+        STAGE_QUEUE_URL,
+        sqsClient,
+      );
+
+      // First updateTicketStatus call should be for the sub-ticket at entry
+      expect(mockUpdateTicketStatus).toHaveBeenCalledWith('sub-ticket-456', 'in_progress');
+    });
+
+    it('calls updateTicketStatus on successful stage transition when linearParentTicketId present', async () => {
+      const researchMsg = {
+        ...VALID_STAGE_MESSAGE,
+        stage: PipelineStage.Research,
+        context: {
+          ...VALID_STAGE_MESSAGE.context,
+          linearParentTicketId: 'linear-parent-123',
+        },
+      };
+      const completedResult: StageResult = {
+        stage: PipelineStage.Research,
+        status: 'completed',
+        tasks: [],
+      };
+      mockHandleResearchStage.mockResolvedValueOnce(completedResult);
+      mockUpdatePipelineStage.mockResolvedValueOnce(undefined);
+      mockSend.mockResolvedValueOnce({});
+      mockUpdateTicketStatus.mockResolvedValue(undefined);
+
+      await routeStage(
+        JSON.stringify(researchMsg),
+        pool,
+        client,
+        MOCK_BUCKET,
+        STAGE_QUEUE_URL,
+        sqsClient,
+      );
+
+      expect(mockUpdateTicketStatus).toHaveBeenCalledWith('linear-parent-123', 'in_progress');
+    });
+
+    it('does not throw when createSubTicket fails (non-critical)', async () => {
+      const executeResult: StageResult = {
+        stage: PipelineStage.Execute,
+        status: 'completed',
+        tasks: [],
+      };
+      mockHandleExecuteStage.mockResolvedValueOnce(executeResult);
+      mockUpdatePipelineStage.mockResolvedValueOnce(undefined);
+      mockSend.mockResolvedValueOnce({});
+      mockCreateSubTicket.mockRejectedValueOnce(new Error('Linear API down'));
+      mockUpdateTicketStatus.mockResolvedValue(undefined);
+
+      // Should NOT throw -- sub-ticket creation is non-critical
+      const result = await routeStage(
+        JSON.stringify(EXECUTE_MSG_WITH_LINEAR),
+        pool,
+        client,
+        MOCK_BUCKET,
+        STAGE_QUEUE_URL,
+        sqsClient,
+      );
+
+      expect(result.status).toBe('completed');
+    });
+
+    it('does not call createSubTicket for non-execute stages', async () => {
+      const researchMsg = {
+        ...VALID_STAGE_MESSAGE,
+        stage: PipelineStage.Research,
+        context: {
+          ...VALID_STAGE_MESSAGE.context,
+          linearParentTicketId: 'linear-parent-123',
+        },
+      };
+      mockHandleResearchStage.mockResolvedValueOnce(COMPLETED_RESULT);
+      mockUpdatePipelineStage.mockResolvedValueOnce(undefined);
+      mockSend.mockResolvedValueOnce({});
+      mockUpdateTicketStatus.mockResolvedValue(undefined);
+
+      await routeStage(
+        JSON.stringify(researchMsg),
+        pool,
+        client,
+        MOCK_BUCKET,
+        STAGE_QUEUE_URL,
+        sqsClient,
+      );
+
+      expect(mockCreateSubTicket).not.toHaveBeenCalled();
+    });
+  });
+
+  // --- PostHog tracking -------------------------------------------------------
+
+  describe('PostHog tracking', () => {
+    it('calls track with stage_completed after handler returns', async () => {
+      mockHandleResearchStage.mockResolvedValueOnce(COMPLETED_RESULT);
+      mockUpdatePipelineStage.mockResolvedValueOnce(undefined);
+      mockSend.mockResolvedValueOnce({});
+
+      await routeStage(
+        JSON.stringify(VALID_STAGE_MESSAGE),
+        pool,
+        client,
+        MOCK_BUCKET,
+        STAGE_QUEUE_URL,
+        sqsClient,
+      );
+
+      expect(mockTrack).toHaveBeenCalledWith('stage_completed', {
+        runId: 'run-abc-123',
+        projectId: 'project-abc',
+        stage: PipelineStage.Research,
+        status: 'completed',
+      });
+    });
+
+    it('calls flush before returning', async () => {
+      mockHandleResearchStage.mockResolvedValueOnce(COMPLETED_RESULT);
+      mockUpdatePipelineStage.mockResolvedValueOnce(undefined);
+      mockSend.mockResolvedValueOnce({});
+
+      await routeStage(
+        JSON.stringify(VALID_STAGE_MESSAGE),
+        pool,
+        client,
+        MOCK_BUCKET,
+        STAGE_QUEUE_URL,
+        sqsClient,
+      );
+
+      expect(mockFlush).toHaveBeenCalledOnce();
     });
   });
 

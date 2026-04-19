@@ -16,6 +16,11 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Construct } from 'constructs';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // --- Props -------------------------------------------------------------------
 
@@ -166,10 +171,9 @@ export class CahPipelineLambda extends Construct {
       functionName: `${props.prefix}-stage-router`,
       runtime: lambda.Runtime.NODEJS_22_X,
       handler: 'index.handler',
-      code: lambda.Code.fromAsset('lambda/stage-router'),
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/stage-router')),
       timeout: cdk.Duration.seconds(900),
       memorySize: 512,
-      reservedConcurrentExecutions: 10,
       role,
       vpc: props.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },

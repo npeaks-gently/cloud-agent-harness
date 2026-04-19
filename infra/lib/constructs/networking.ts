@@ -54,5 +54,19 @@ export class CahNetworking extends Construct {
     });
 
     cdk.Tags.of(this.vpc).add('Name', `${props.prefix}-vpc`);
+
+    // --- VPC Endpoints -----------------------------------------------------------
+    // Lambdas in isolated subnets need interface endpoints to reach AWS services.
+    // Without these, any call to Secrets Manager or SQS from a VPC Lambda times out.
+
+    this.vpc.addInterfaceEndpoint('SecretsManagerEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER,
+      subnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
+    });
+
+    this.vpc.addInterfaceEndpoint('SqsEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.SQS,
+      subnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
+    });
   }
 }

@@ -1,47 +1,98 @@
 /**
- * Approve stage handler for pipeline plan approval.
+ * Approve stage handler for pipeline plan approval via Slack.
  *
- * Auto-approves the pipeline and continues execution. This is a
- * placeholder for Phase 3 Slack integration (D-10) where users
- * will approve/reject plans via Slack buttons.
+ * Sends a Block Kit approval message to Slack, persists an approval
+ * token to Postgres, and returns 'paused' status. The pipeline remains
+ * paused until the Slack webhook Lambda resolves the approval and
+ * re-enqueues the next stage message.
  *
- * @see D-10 Approve stage auto-approve until Phase 3 Slack integration
+ * @see D-01 Approve stage sends Slack message and returns 'paused'
+ * @see D-04 Block Kit approve/reject buttons
+ * @see T-03-09 Approval token is UUID v4 (122 bits entropy)
  */
 
+import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
-import { PipelineStage, type StageMessage, type StageResult } from '../types.js';
+import { PipelineStage, PipelineError, type StageMessage, type StageResult } from '../types.js';
+import { sendApprovalMessage } from '../../integrations/slack.js';
+import { insertApproval } from '../../postgres-client.js';
+import { track } from '../../analytics.js';
 
 // --- Approve handler ---------------------------------------------------------
 
 /**
- * Handles the approve stage by auto-approving the pipeline plan.
+ * Handles the approve stage by sending a Slack approval message
+ * and persisting the approval token to Postgres.
  *
- * In v1, this stage immediately returns 'completed' without user
- * interaction. Phase 3 will replace this with Slack-based approval
- * (INTG-01) where the plan is sent to Slack and the pipeline pauses
- * until the user clicks Approve or Reject.
+ * The handler returns 'paused' status so the stage router does NOT
+ * advance the pipeline via SQS. The Slack webhook Lambda is responsible
+ * for resolving the approval and re-enqueuing the next stage.
  *
  * @param msg - Stage message with pipeline context
- * @param _pool - Postgres connection pool (unused in auto-approve)
- * @returns Stage result with status 'completed' and no tasks
+ * @param pool - Postgres connection pool for approval persistence
+ * @returns Stage result with status 'paused' and no tasks
+ * @throws {PipelineError} When Slack send or Postgres insert fails
  *
  * @example
  * const result = await handleApproveStage(stageMessage, pool);
- * // result.status === 'completed' (auto-approved)
+ * // result.status === 'paused'
  */
 export async function handleApproveStage(
   msg: StageMessage,
-  _pool: Pool,
+  pool: Pool,
 ): Promise<StageResult> {
-  // D-10: Auto-approve until Phase 3 Slack integration
-  // Log auto-approval for observability (CloudWatch structured logging)
-  console.log(JSON.stringify({
-    level: 'info',
-    message: 'Auto-approved pipeline plan',
+  // Step 1: Generate approval token (T-03-09: UUID v4, 122 bits entropy)
+  const token = randomUUID();
+
+  // Step 2: Read Slack channel from environment
+  const channel = process.env.SLACK_APPROVAL_CHANNEL ?? '';
+
+  // Step 3: Build plan summary for the Slack message
+  const planSummary = [
+    `*Feature:* ${msg.context.featureDescription}`,
+    `*Phase:* ${msg.context.phaseNumber} of ${msg.context.phaseTotal}`,
+    `*Project:* \`${msg.projectId}\``,
+  ].join('\n');
+
+  // Steps 4-5: Send Slack message and persist token (wrapped for error handling)
+  let messageTs: string;
+  try {
+    messageTs = await sendApprovalMessage(channel, msg.runId, msg.projectId, token, planSummary);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new PipelineError(
+      `Failed to send Slack approval message: ${message}`,
+      'handleApproveStage',
+      PipelineStage.Approve,
+    );
+  }
+
+  try {
+    await insertApproval(pool, msg.runId, token, channel, messageTs);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new PipelineError(
+      `Failed to persist approval token: ${message}`,
+      'handleApproveStage',
+      PipelineStage.Approve,
+    );
+  }
+
+  // Step 6: Track approval event (D-14)
+  track('approval_requested', {
     runId: msg.runId,
     projectId: msg.projectId,
     stage: PipelineStage.Approve,
+  });
+
+  // Step 7: CloudWatch log (T-03-11: includes runId and token but NOT message content)
+  console.log(JSON.stringify({
+    level: 'info',
+    message: 'Approval requested via Slack',
+    runId: msg.runId,
+    token,
   }));
 
-  return { stage: PipelineStage.Approve, status: 'completed', tasks: [] };
+  // Step 8: Return paused -- stage router will NOT advance pipeline via SQS
+  return { stage: PipelineStage.Approve, status: 'paused', tasks: [] };
 }
