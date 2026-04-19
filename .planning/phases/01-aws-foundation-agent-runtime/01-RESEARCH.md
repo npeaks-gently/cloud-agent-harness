@@ -711,28 +711,28 @@ export async function insertAgentRun(
 | A7 | Postgres `gen_random_uuid()` is available by default in Postgres 16 | Code Examples (Schema) | If the `pgcrypto` extension is not enabled by default, the schema creation will fail |
 | A8 | 900-second SQS visibility timeout is sufficient for agent tasks | Code Examples (Messaging) | If tasks routinely exceed 15 minutes, messages will become visible and cause duplicate processing |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Daytona Sandbox Egress IPs for RDS Security Group**
+1. **Daytona Sandbox Egress IPs for RDS Security Group** -- RESOLVED
    - What we know: Daytona Cloud sandboxes have internet access (Tier 3+) but no documented static egress IP ranges
    - What's unclear: Whether Daytona provides IP ranges for firewall whitelisting, or if 0.0.0.0/0 is the only option for security groups
    - Recommendation: Accept 0.0.0.0/0 on port 5432 with SSL enforcement for dev. Revisit with customer-managed compute or VPN tunnel if/when security requirements tighten for staging/prod
-
-2. **Daytona Billing Tier Requirements**
+   - **Resolution:** Accepted. 0.0.0.0/0 on port 5432 with SSL enforcement is used in the CDK networking construct. This is appropriate for a dev environment where Daytona has no static IPs. Mitigated by T-01-01 (SSL enforcement via rds.force_ssl=1 parameter group).
+2. **Daytona Billing Tier Requirements** -- RESOLVED
    - What we know: Tier 3+ is needed for full internet access from sandboxes (required for RDS, S3, GitHub connectivity). Pricing is $0.00002/vCPU-second + $0.0000025/GB-RAM-second
    - What's unclear: Whether the $200 free tier credit is sufficient for Phase 1 validation, and what billing tier the account starts at
    - Recommendation: Verify Daytona account tier before implementation starts; budget ~$5-10 for Phase 1 validation (a few sandbox hours)
-
-3. **AWS Quota Increases for Fresh Account**
+   - **Resolution:** Accepted as pre-requisite. Operator must verify Daytona account tier (Tier 3+) before running the Phase 1 validation script. The validate-phase1.ts script documents this requirement in its header comments. Budget of ~$5-10 is adequate for validation runs.
+3. **AWS Quota Increases for Fresh Account** -- RESOLVED
    - What we know: STATE.md warns "AWS quota increases have 1-5 business day lead time"
    - What's unclear: Which specific quotas need increasing for Phase 1 (likely default RDS instance limits, VPC limits)
    - Recommendation: File quota increase requests on day one of implementation. Default quotas should be sufficient for a single dev environment, but verify: RDS instance count, VPC count, Elastic IP count
-
-4. **gsd-tools.cjs Base Path Configurability**
+   - **Resolution:** Accepted. Default quotas are sufficient for Phase 1 (single VPC, single RDS instance, single S3 bucket). No quota increase requests needed. If CDK deploy fails due to quota, the error message will identify which quota to request.
+4. **gsd-tools.cjs Base Path Configurability** -- RESOLVED
    - What we know: STATE.md notes "gsd-tools.cjs base path configurability needs audit before Daytona workspace integration"
    - What's unclear: Whether gsd-tools.cjs hardcodes paths that won't work inside a Daytona sandbox
    - Recommendation: This is a Phase 2+ concern. Phase 1 validation (D-08) uses a simple SDK query task, not the full GSD pipeline. Defer the audit to when the full pipeline runs in Daytona
-
+   - **Resolution:** Deferred to Phase 2. Phase 1 validation (D-08) uses a simple SDK query task that does not invoke gsd-tools.cjs. The base path audit is only needed when the full GSD pipeline runs inside Daytona sandboxes.
 ## Environment Availability
 
 | Dependency | Required By | Available | Version | Fallback |
