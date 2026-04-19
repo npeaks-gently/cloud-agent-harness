@@ -15,6 +15,8 @@ import { CahStorage } from './constructs/storage.js';
 import { CahDatabase } from './constructs/database.js';
 import { CahMessaging } from './constructs/messaging.js';
 import { CahIam } from './constructs/iam.js';
+import { CahPipelineLambda } from './constructs/pipeline-lambda.js';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 
 // --- Constants ---------------------------------------------------------------
 
@@ -68,6 +70,24 @@ export class CahStack extends cdk.Stack {
       secretArn: database.secret.secretArn,
     });
 
+    // --- Pipeline --------------------------------------------------------------
+
+    const anthropicKeySecret = secretsmanager.Secret.fromSecretNameV2(
+      this,
+      'AnthropicKeySecret',
+      `${PREFIX}-anthropic-api-key`,
+    );
+
+    const pipeline = new CahPipelineLambda(this, 'Pipeline', {
+      prefix: PREFIX,
+      vpc: networking.vpc,
+      bucketArn: storage.bucket.bucketArn,
+      jobQueue: messaging.queue,
+      dbSecretArn: database.secret.secretArn,
+      dbSecurityGroup: database.securityGroup,
+      anthropicKeySecret,
+    });
+
     // --- Stack Outputs ---------------------------------------------------------
 
     new cdk.CfnOutput(this, 'BucketName', {
@@ -88,6 +108,16 @@ export class CahStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'SecretArn', {
       value: database.secret.secretArn,
       description: 'Secrets Manager secret ARN for DB credentials',
+    });
+
+    new cdk.CfnOutput(this, 'StageQueueUrl', {
+      value: pipeline.stageQueue.queueUrl,
+      description: 'SQS stage queue URL for pipeline routing',
+    });
+
+    new cdk.CfnOutput(this, 'StageRouterFnArn', {
+      value: pipeline.stageRouterFn.functionArn,
+      description: 'Stage router Lambda function ARN',
     });
   }
 }

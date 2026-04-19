@@ -9,3 +9,4 @@ cdk.out/
 *.d.ts.map
 !vitest.config.ts
 !cdk.json
+!lambda/**/*.js

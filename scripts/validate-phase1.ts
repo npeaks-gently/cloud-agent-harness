@@ -25,12 +25,18 @@
  * Usage: npx ts-node --esm scripts/validate-phase1.ts
  */
 
-import { createDbPool, insertPipelineRun, getPipelineRun } from '../src/cloud/postgres-client.js';
-import { uploadArtifact, downloadArtifact, listArtifacts } from '../src/cloud/s3-artifacts.js';
-import { DaytonaClient } from '../src/cloud/daytona-client.js';
-import { SqsConsumer } from '../src/cloud/sqs-consumer.js';
+import { config } from 'dotenv';
+import { resolve } from 'node:path';
+
+// Load infra/.env
+config({ path: resolve(import.meta.dirname ?? __dirname, '..', 'infra', '.env') });
+
+import { createDbPool, insertPipelineRun, getPipelineRun } from '../src/cloud/postgres-client.ts';
+import { uploadArtifact, downloadArtifact, listArtifacts } from '../src/cloud/s3-artifacts.ts';
+import { DaytonaClient } from '../src/cloud/daytona-client.ts';
+import { SqsConsumer } from '../src/cloud/sqs-consumer.ts';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
-import type { ArtifactKey, PipelineJobMessage } from '../src/cloud/types.js';
+import type { ArtifactKey, PipelineJobMessage } from '../src/cloud/types.ts';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
