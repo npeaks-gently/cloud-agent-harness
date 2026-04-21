@@ -40,6 +40,14 @@ export interface CahPipelineLambdaProps {
   dbSecurityGroup: ec2.ISecurityGroup;
   /** Secrets Manager secret containing the Anthropic API key. */
   anthropicKeySecret: secretsmanager.ISecret;
+  /** Secrets Manager secret containing the GitHub PAT. */
+  githubTokenSecret: secretsmanager.ISecret;
+  /** Secrets Manager secret containing the Linear API key. */
+  linearApiKeySecret: secretsmanager.ISecret;
+  /** Secrets Manager secret containing the Daytona API key. */
+  daytonaApiKeySecret: secretsmanager.ISecret;
+  /** Secrets Manager secret containing the PostHog project API key. */
+  posthogApiKeySecret: secretsmanager.ISecret;
 }
 
 // --- Construct ---------------------------------------------------------------
@@ -155,13 +163,19 @@ export class CahPipelineLambda extends Construct {
       }),
     );
 
-    // Secrets Manager -- Anthropic API key (T-02-18)
+    // Secrets Manager -- API keys for external services (T-02-18)
     role.addToPolicy(
       new iam.PolicyStatement({
-        sid: 'SecretsManagerAnthropicAccess',
+        sid: 'SecretsManagerApiKeyAccess',
         effect: iam.Effect.ALLOW,
         actions: ['secretsmanager:GetSecretValue'],
-        resources: [props.anthropicKeySecret.secretArn],
+        resources: [
+          props.anthropicKeySecret.secretArn,
+          props.githubTokenSecret.secretArn,
+          props.linearApiKeySecret.secretArn,
+          props.daytonaApiKeySecret.secretArn,
+          props.posthogApiKeySecret.secretArn,
+        ],
       }),
     );
 
@@ -182,7 +196,11 @@ export class CahPipelineLambda extends Construct {
         STAGE_QUEUE_URL: this.stageQueue.queueUrl,
         NODE_OPTIONS: '--enable-source-maps',
         ANTHROPIC_API_KEY_SECRET_ARN: props.anthropicKeySecret.secretArn,
+        CAH_GITHUB_TOKEN_SECRET_ARN: props.githubTokenSecret.secretArn,
+        LINEAR_API_KEY_SECRET_ARN: props.linearApiKeySecret.secretArn,
+        DAYTONA_API_KEY_SECRET_ARN: props.daytonaApiKeySecret.secretArn,
         DB_SECRET_ARN: props.dbSecretArn,
+        POSTHOG_API_KEY_SECRET_ARN: props.posthogApiKeySecret.secretArn,
       },
     });
 

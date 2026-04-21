@@ -73,10 +73,37 @@ export class CahStack extends cdk.Stack {
 
     // --- Pipeline --------------------------------------------------------------
 
-    const anthropicKeySecret = secretsmanager.Secret.fromSecretNameV2(
+    // Import secrets by complete ARN to avoid AccessDeniedException with partial ARNs.
+    // See: https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.aws_secretsmanager.Secret.html
+
+    const anthropicKeySecret = secretsmanager.Secret.fromSecretCompleteArn(
       this,
       'AnthropicKeySecret',
-      `${PREFIX}-anthropic-api-key`,
+      'arn:aws:secretsmanager:us-east-1:659828095854:secret:cah-dev-anthropic-api-key-GucuB5',
+    );
+
+    const githubTokenSecret = secretsmanager.Secret.fromSecretCompleteArn(
+      this,
+      'GitHubTokenSecret',
+      'arn:aws:secretsmanager:us-east-1:659828095854:secret:cah-dev-github-token-8fJugd',
+    );
+
+    const linearApiKeySecret = secretsmanager.Secret.fromSecretCompleteArn(
+      this,
+      'LinearApiKeySecret',
+      'arn:aws:secretsmanager:us-east-1:659828095854:secret:cah-dev-linear-api-key-TeFujx',
+    );
+
+    const daytonaApiKeySecret = secretsmanager.Secret.fromSecretCompleteArn(
+      this,
+      'DaytonaApiKeySecret',
+      'arn:aws:secretsmanager:us-east-1:659828095854:secret:cah-dev-daytona-api-key-lQEANS',
+    );
+
+    const posthogApiKeySecret = secretsmanager.Secret.fromSecretCompleteArn(
+      this,
+      'PostHogApiKeySecret',
+      'arn:aws:secretsmanager:us-east-1:659828095854:secret:cah-dev-posthog-api-key-oLQF8n',
     );
 
     const pipeline = new CahPipelineLambda(this, 'Pipeline', {
@@ -87,6 +114,10 @@ export class CahStack extends cdk.Stack {
       dbSecretArn: database.secret.secretArn,
       dbSecurityGroup: database.securityGroup,
       anthropicKeySecret,
+      githubTokenSecret,
+      linearApiKeySecret,
+      daytonaApiKeySecret,
+      posthogApiKeySecret,
     });
 
     // --- Slack Webhook ----------------------------------------------------------
@@ -112,6 +143,7 @@ export class CahStack extends cdk.Stack {
       dbSecurityGroup: database.securityGroup,
       slackSigningSecret,
       slackBotToken,
+      posthogApiKeySecret,
     });
 
     // --- Stack Outputs ---------------------------------------------------------
