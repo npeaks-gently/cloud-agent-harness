@@ -116,6 +116,11 @@ export async function handleSlackAction(
   pool: Pool,
   sqsClient?: SQSClient,
 ): Promise<APIGatewayProxyResult> {
+  const t0 = Date.now();
+  const lap = (label: string): void => {
+    console.log(JSON.stringify({ level: 'debug', message: `timing: ${label}`, elapsedMs: Date.now() - t0 }));
+  };
+
   const timestamp = event.headers['x-slack-request-timestamp'] ?? '';
   const slackSignature = event.headers['x-slack-signature'] ?? '';
 
@@ -126,10 +131,12 @@ export async function handleSlackAction(
 
   // Step 1: Verify signature against the decoded body
   const signingSecret = await getSigningSecret();
+  lap('signature-secret-fetched');
   if (!verifySlackSignature(signingSecret, timestamp, rawBody, slackSignature)) {
     console.log(JSON.stringify({ level: 'warn', message: 'Invalid Slack signature' }));
     return { statusCode: 401, body: 'Invalid signature' };
   }
+  lap('signature-verified');
 
   // Step 2: Parse payload (Slack sends application/x-www-form-urlencoded)
   const params = new URLSearchParams(rawBody);
@@ -165,6 +172,7 @@ export async function handleSlackAction(
 
   // Step 4: Validate token
   const approval = await getApprovalByToken(pool, token);
+  lap('token-lookup');
   if (!approval) {
     console.log(JSON.stringify({ level: 'warn', message: 'Approval token not found', token }));
     return { statusCode: 400, body: 'Invalid or expired approval token' };
@@ -176,6 +184,7 @@ export async function handleSlackAction(
 
   // Step 5: Resolve approval (returns false if already resolved by concurrent request)
   const wasResolved = await resolveApproval(pool, token, isApproval ? 'approved' : 'rejected', resolvedBy);
+  lap('approval-resolved');
   if (!wasResolved) {
     console.log(JSON.stringify({ level: 'info', message: 'Approval already resolved by concurrent request', token }));
     return { statusCode: 200, body: 'Already processed' };
@@ -190,6 +199,7 @@ export async function handleSlackAction(
   // Step 6: On approval, resume pipeline via SQS
   if (isApproval) {
     const pipelineRun = await getPipelineRun(pool, approval.pipelineRunId);
+    lap('pipeline-run-fetched');
     if (!pipelineRun) {
       throw new WebhookHandlerError(
         `Pipeline run ${approval.pipelineRunId} not found`,
@@ -237,12 +247,14 @@ export async function handleSlackAction(
       QueueUrl: stageQueueUrl,
       MessageBody: JSON.stringify(nextMsg),
     }));
+    lap('sqs-sent');
 
     // Update pipeline status back to 'running'
     await pool.query(
       `UPDATE pipeline_runs SET status = 'running', current_stage = $1 WHERE id = $2`,
       [nextStage, approval.pipelineRunId],
     );
+    lap('pipeline-status-updated');
 
     console.log(JSON.stringify({
       level: 'info',
@@ -256,6 +268,7 @@ export async function handleSlackAction(
       `UPDATE pipeline_runs SET status = 'rejected' WHERE id = $1`,
       [approval.pipelineRunId],
     );
+    lap('pipeline-rejected');
 
     console.log(JSON.stringify({
       level: 'info',
@@ -264,7 +277,18 @@ export async function handleSlackAction(
     }));
   }
 
-  await flush();
+  // Best-effort flush with 2s timeout — PostHog endpoint may be unreachable
+  // from VPC isolated subnets. Never block the Slack response for analytics.
+  try {
+    await Promise.race([
+      flush(),
+      new Promise(resolve => setTimeout(resolve, 2000)),
+    ]);
+  } catch {
+    // Analytics flush failure is non-critical
+  }
+  lap('flush-done');
+
   return { statusCode: 200, body: '' };
 }
 
