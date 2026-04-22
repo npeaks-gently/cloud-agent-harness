@@ -24,6 +24,24 @@ async function main(): Promise<void> {
     throw new Error('DAYTONA_API_KEY is not set');
   }
 
+  console.log('[build] compiling SDK to sdk/dist...');
+  // tsc emits JS even with type errors (noEmitOnError defaults to false),
+  // but npm exits non-zero. Ignore the exit code and rely on the dist
+  // existence check below.
+  try {
+    execFileSync('npm', ['run', 'build'], {
+      cwd: path.join(rootDir, 'sdk'),
+      stdio: 'inherit',
+    });
+  } catch {
+    console.warn('[build] tsc reported errors; checking dist output...');
+  }
+
+  const sdkDistPath = path.join(rootDir, 'sdk/dist/index.js');
+  if (!existsSync(sdkDistPath)) {
+    throw new Error(`SDK dist missing at ${sdkDistPath}`);
+  }
+
   console.log('[build] bundling entrypoint...');
   execFileSync('node', [path.join(rootDir, 'scripts/build-entrypoint.mjs')], {
     cwd: rootDir,
@@ -37,6 +55,10 @@ async function main(): Promise<void> {
 
   const snapshotName = getSnapshotName();
   console.log(`[snapshot] publishing ${snapshotName}...`);
+
+  // Daytona SDK resolves addLocalDir paths relative to CWD, not relative
+  // to image-builder.ts. Switch to the repo root so ./sdk, ./agents, etc. resolve.
+  process.chdir(rootDir);
 
   const daytona = new Daytona({ apiKey });
   const startMs = Date.now();

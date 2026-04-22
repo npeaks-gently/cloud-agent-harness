@@ -49,10 +49,39 @@ export async function createOrUpdateSnapshot(
     onLogs?: (log: string) => void;
   },
 ): Promise<void> {
+  const name = opts?.name ?? SNAPSHOT_NAME;
   const image = buildHarnessImage();
 
+  // Daytona has no in-place update API -- delete any existing snapshot with
+  // this name before creating the new one. `get` throws when absent; swallow
+  // that so a fresh publish works too.
+  try {
+    const existing = await daytona.snapshot.get(name);
+    const log = opts?.onLogs ?? console.log;
+    log(`[snapshot] deleting existing ${name} (id=${existing.id}, state=${existing.state})`);
+    await daytona.snapshot.delete(existing);
+    log(`[snapshot] delete request accepted; waiting for removal...`);
+    // Poll until the snapshot is gone (or we time out after 60s)
+    const deadlineMs = Date.now() + 60_000;
+    while (Date.now() < deadlineMs) {
+      try {
+        await daytona.snapshot.get(name);
+        await new Promise((r) => setTimeout(r, 2000));
+      } catch {
+        log(`[snapshot] ${name} removed`);
+        break;
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.toLowerCase().includes('not found') && !msg.includes('404')) {
+      throw err;
+    }
+    // no prior snapshot; fall through to create
+  }
+
   await daytona.snapshot.create(
-    { name: opts?.name ?? SNAPSHOT_NAME, image },
+    { name, image },
     {
       onLogs: opts?.onLogs ?? console.log,
       timeout: opts?.timeoutSeconds ?? 300,
