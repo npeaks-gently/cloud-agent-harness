@@ -74,6 +74,11 @@ const PHASE_FILE_MANIFEST: Record<PhaseType, FileSpec[]> = {
     { key: 'roadmap', filename: 'ROADMAP.md', required: false },
     { key: 'context', filename: 'CONTEXT.md', required: false },
   ],
+  [PhaseType.AutoDecide]: [
+    { key: 'state', filename: 'STATE.md', required: true },
+    { key: 'context', filename: 'CONTEXT.md', required: false },
+    { key: 'research', filename: 'RESEARCH.md', required: false },
+  ],
 };
 
 // ─── ContextEngine class ─────────────────────────────────────────────────────

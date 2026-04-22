@@ -1,0 +1,12 @@
+node_modules/
+dist/
+cdk.out/
+.env
+.env.*
+!.env.example
+*.js
+*.d.ts
+*.d.ts.map
+!vitest.config.ts
+!cdk.json
+!lambda/**/*.js

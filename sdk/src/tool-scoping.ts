@@ -21,6 +21,7 @@ const PHASE_DEFAULT_TOOLS: Record<PhaseType, string[]> = {
   [PhaseType.Discuss]: ['Read', 'Bash', 'Grep', 'Glob'],
   [PhaseType.Plan]: ['Read', 'Write', 'Bash', 'Glob', 'Grep', 'WebFetch'],
   [PhaseType.Repair]: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'],
+  [PhaseType.AutoDecide]: ['Read', 'Write', 'Bash', 'Grep', 'Glob'],
 };
 
 // ─── Phase → agent definition filename ──────────────────────────────────────
@@ -36,6 +37,7 @@ export const PHASE_AGENT_MAP: Record<PhaseType, string | null> = {
   [PhaseType.Verify]: 'gsd-verifier.md',
   [PhaseType.Discuss]: null,
   [PhaseType.Repair]: null,
+  [PhaseType.AutoDecide]: 'auto-decider.md',
 };
 
 // ─── Public API ──────────────────────────────────────────────────────────────

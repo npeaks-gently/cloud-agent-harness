@@ -115,6 +115,9 @@ function makeConfig(overrides: Partial<GSDConfig> = {}): GSDConfig {
     ...overrides,
     workflow: {
       ...CONFIG_DEFAULTS.workflow,
+      // Default auto_decide to false in tests so existing tests are unaffected.
+      // Tests that exercise auto-decide should explicitly set auto_decide: true (or omit for !== false check).
+      auto_decide: false,
       ...(overrides.workflow ?? {}),
     },
   } as GSDConfig;
@@ -176,9 +179,10 @@ describe('PhaseRunner', () => {
   // ─── Happy path ────────────────────────────────────────────────────────
 
   describe('happy path — full lifecycle', () => {
-    it('runs all steps in order: discuss → research → plan → plan-check → execute → verify → advance', async () => {
+    it('runs all steps in order: discuss → research → plan → plan-check → auto-decide → execute → verify → advance', async () => {
       const phaseOp = makePhaseOp({ has_context: false, has_plans: true, plan_count: 1 });
-      const deps = makeDeps();
+      const config = makeConfig({ workflow: { auto_decide: true } as any });
+      const deps = makeDeps({ config });
       (deps.tools.initPhaseOp as ReturnType<typeof vi.fn>).mockResolvedValue(phaseOp);
 
       const runner = new PhaseRunner(deps);
@@ -188,13 +192,14 @@ describe('PhaseRunner', () => {
       expect(result.phaseNumber).toBe('1');
       expect(result.phaseName).toBe('Authentication');
 
-      // Verify steps ran in order (includes plan-check since plan_check config defaults to true)
+      // Verify steps ran in order (includes plan-check and auto-decide since both enabled)
       const stepTypes = result.steps.map(s => s.step);
       expect(stepTypes).toEqual([
         PhaseStepType.Discuss,
         PhaseStepType.Research,
         PhaseStepType.Plan,
         PhaseStepType.PlanCheck,
+        PhaseStepType.AutoDecide,
         PhaseStepType.Execute,
         PhaseStepType.Verify,
         PhaseStepType.Advance,
@@ -272,6 +277,7 @@ describe('PhaseRunner', () => {
           research: false,
           verifier: false,
           plan_check: false,
+          auto_decide: false,
         } as any,
       });
       const phaseOp = makePhaseOp({ has_context: false, has_plans: true, plan_count: 1 });
@@ -1051,7 +1057,7 @@ Use TypeScript.`, 'utf-8');
 
     it('phase_complete event reports success and step count', async () => {
       const phaseOp = makePhaseOp({ has_context: true, has_plans: true, plan_count: 1 });
-      const config = makeConfig({ workflow: { research: false, verifier: false, skip_discuss: true, plan_check: false } as any });
+      const config = makeConfig({ workflow: { research: false, verifier: false, skip_discuss: true, plan_check: false, auto_decide: false } as any });
       const deps = makeDeps({ config });
       (deps.tools.initPhaseOp as ReturnType<typeof vi.fn>).mockResolvedValue(phaseOp);
 
@@ -1294,7 +1300,7 @@ Use TypeScript.`, 'utf-8');
   describe('result aggregation', () => {
     it('aggregates cost across all steps', async () => {
       const phaseOp = makePhaseOp({ has_context: true, has_plans: true, plan_count: 2 });
-      const config = makeConfig({ workflow: { research: false, verifier: false, skip_discuss: true, plan_check: false } as any });
+      const config = makeConfig({ workflow: { research: false, verifier: false, skip_discuss: true, plan_check: false, auto_decide: false } as any });
       const deps = makeDeps({ config });
       (deps.tools.initPhaseOp as ReturnType<typeof vi.fn>).mockResolvedValue(phaseOp);
       (deps.tools.phasePlanIndex as ReturnType<typeof vi.fn>).mockResolvedValue(makePlanIndex(2));

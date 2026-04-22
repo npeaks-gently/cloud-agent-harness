@@ -1,0 +1,27 @@
+{
+  "name": "@cah/infra",
+  "version": "0.1.0",
+  "description": "Cloud Agent Harness -- AWS CDK infrastructure",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "cdk": "npx aws-cdk",
+    "synth": "npx aws-cdk synth",
+    "deploy": "npx aws-cdk deploy",
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.250.0",
+    "constructs": "^10.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.2"
+  }
+}

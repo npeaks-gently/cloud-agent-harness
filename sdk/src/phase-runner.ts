@@ -246,6 +246,17 @@ export class PhaseRunner {
       }
     }
 
+    // ── Step 3.7: Auto-Decide (D-03) ──
+    if (!halted && this.config.workflow.auto_decide !== false) {
+      const autoDecideResult = await this.retryOnce('auto-decide', () => this.runAutoDecideStep(phaseNumber, sessionOpts));
+      steps.push(autoDecideResult);
+
+      // Auto-decide failure is non-fatal -- log warning but continue execution
+      if (!autoDecideResult.success) {
+        this.logger?.warn(`Auto-decide step failed for phase ${phaseNumber}. Continuing without auto-decisions.`);
+      }
+    }
+
     // ── Step 4: Execute ──
     if (!halted) {
       const executeResult = await this.retryOnce('execute', () => this.runExecuteStep(phaseNumber, sessionOpts));
@@ -406,6 +417,93 @@ export class PhaseRunner {
 
     return {
       step: PhaseStepType.PlanCheck,
+      success,
+      durationMs,
+      error: planResult.error?.messages.join('; ') || undefined,
+      planResults: [planResult],
+    };
+  }
+
+  /**
+   * Runs the auto-decide step: spawns the auto-decider agent to make routine
+   * decisions and escalate high-risk ones (D-01, D-03).
+   *
+   * Non-fatal: if the agent fails, the pipeline continues without
+   * auto-decisions and decisions will be made interactively or by the executor.
+   */
+  private async runAutoDecideStep(
+    phaseNumber: string,
+    sessionOpts: SessionOptions,
+  ): Promise<PhaseStepResult> {
+    const stepStart = Date.now();
+
+    this.eventStream.emitEvent({
+      type: GSDEventType.PhaseStepStart,
+      timestamp: new Date().toISOString(),
+      sessionId: '',
+      phaseNumber,
+      step: PhaseStepType.AutoDecide,
+    });
+
+    let planResult: PlanResult;
+    try {
+      // Load the auto-decider agent definition
+      const agentDef = await this.promptFactory.loadAgentDef(PhaseType.AutoDecide);
+
+      // Build prompt with phase context
+      const contextFiles = await this.contextEngine.resolveContextFiles(PhaseType.AutoDecide);
+      let prompt = await this.promptFactory.buildPrompt(PhaseType.AutoDecide, null, contextFiles);
+
+      // Supplement with auto-decide instructions
+      prompt += '\n\n## Auto-Decide Instructions\n\nYou are the auto-decider agent. Read the phase context, identify decision points, classify each as routine or high-risk, make routine decisions autonomously, and escalate high-risk ones. Write DECISIONS.md with your routine decisions and output structured JSON for escalations.';
+
+      planResult = await runPhaseStepSession(
+        prompt,
+        PhaseStepType.AutoDecide,
+        this.config,
+        sessionOpts,
+        this.eventStream,
+        { phase: PhaseType.AutoDecide, planName: undefined },
+      );
+    } catch (err) {
+      const durationMs = Date.now() - stepStart;
+      const errorMsg = err instanceof Error ? err.message : String(err);
+
+      this.eventStream.emitEvent({
+        type: GSDEventType.PhaseStepComplete,
+        timestamp: new Date().toISOString(),
+        sessionId: '',
+        phaseNumber,
+        step: PhaseStepType.AutoDecide,
+        success: false,
+        durationMs,
+        error: errorMsg,
+      });
+
+      return {
+        step: PhaseStepType.AutoDecide,
+        success: false,
+        durationMs,
+        error: errorMsg,
+      };
+    }
+
+    const durationMs = Date.now() - stepStart;
+    const success = planResult.success;
+
+    this.eventStream.emitEvent({
+      type: GSDEventType.PhaseStepComplete,
+      timestamp: new Date().toISOString(),
+      sessionId: planResult.sessionId,
+      phaseNumber,
+      step: PhaseStepType.AutoDecide,
+      success,
+      durationMs,
+      error: planResult.error?.messages.join('; ') || undefined,
+    });
+
+    return {
+      step: PhaseStepType.AutoDecide,
       success,
       durationMs,
       error: planResult.error?.messages.join('; ') || undefined,
