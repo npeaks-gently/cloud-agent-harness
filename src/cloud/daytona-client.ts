@@ -8,6 +8,7 @@
 
 import { Daytona, type CreateSandboxFromSnapshotParams } from '@daytonaio/sdk';
 import type { AgentTaskConfig, AgentTaskResult } from './types.js';
+import { getSnapshotName } from './snapshot/snapshot-manager.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -88,6 +89,7 @@ export class DaytonaClient {
       // Step 1: Create sandbox with environment variables and resources
       const createParams: CreateSandboxFromSnapshotParams = {
         language: 'typescript',
+        snapshot: getSnapshotName(),
         envVars: config.envVars,
       };
 
