@@ -208,7 +208,7 @@ export class CahPipelineLambda extends Construct {
       },
       role,
       vpc: props.vpc,
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroups: [lambdaSg],
       environment: {
         STAGE_QUEUE_URL: this.stageQueue.queueUrl,
