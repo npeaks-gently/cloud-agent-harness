@@ -300,7 +300,8 @@ export async function main(): Promise<void> {
 
 // Only auto-run when executed directly, not when imported in tests.
 const isMainModule = process.argv[1]?.endsWith('agent-entrypoint.js')
-  || process.argv[1]?.endsWith('agent-entrypoint.ts');
+  || process.argv[1]?.endsWith('agent-entrypoint.ts')
+  || process.argv[1]?.endsWith('/harness/entrypoint.js');
 
 if (isMainModule) {
   main().catch((err) => {

@@ -648,6 +648,63 @@ describe('stage-router', () => {
     });
   });
 
+  // --- planningPrefix forwarding -----------------------------------------------
+
+  describe('jobMessageToIntakeStageMessage planningPrefix forwarding', () => {
+    it('forwards planningPrefix from PipelineJobMessage to StageMessage context', async () => {
+      const intakeResult: StageResult = {
+        stage: PipelineStage.Intake,
+        status: 'completed',
+        tasks: [],
+      };
+      mockHandleIntakeStage.mockResolvedValueOnce(intakeResult);
+      mockUpdatePipelineStage.mockResolvedValueOnce(undefined);
+      mockSend.mockResolvedValueOnce({});
+
+      const jobWithPrefix = {
+        ...VALID_PIPELINE_JOB_MESSAGE,
+        planningPrefix: 'triggers/abc-123/planning/',
+      };
+
+      await routeStage(
+        JSON.stringify(jobWithPrefix),
+        pool,
+        client,
+        MOCK_BUCKET,
+        STAGE_QUEUE_URL,
+        sqsClient,
+      );
+
+      expect(mockHandleIntakeStage).toHaveBeenCalledOnce();
+      const calledMsg = mockHandleIntakeStage.mock.calls[0][0];
+      expect(calledMsg.context.planningPrefix).toBe('triggers/abc-123/planning/');
+    });
+
+    it('sets planningPrefix to undefined when not provided in PipelineJobMessage', async () => {
+      const intakeResult: StageResult = {
+        stage: PipelineStage.Intake,
+        status: 'completed',
+        tasks: [],
+      };
+      mockHandleIntakeStage.mockResolvedValueOnce(intakeResult);
+      mockUpdatePipelineStage.mockResolvedValueOnce(undefined);
+      mockSend.mockResolvedValueOnce({});
+
+      await routeStage(
+        JSON.stringify(VALID_PIPELINE_JOB_MESSAGE),
+        pool,
+        client,
+        MOCK_BUCKET,
+        STAGE_QUEUE_URL,
+        sqsClient,
+      );
+
+      expect(mockHandleIntakeStage).toHaveBeenCalledOnce();
+      const calledMsg = mockHandleIntakeStage.mock.calls[0][0];
+      expect(calledMsg.context.planningPrefix).toBeUndefined();
+    });
+  });
+
   // --- Type guard tests -------------------------------------------------------
 
   describe('type guard disambiguation', () => {

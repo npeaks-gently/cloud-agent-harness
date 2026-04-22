@@ -141,6 +141,7 @@ describe('handleIntakeStage', () => {
       stage: PipelineStage.Intake,
       featureBranch: expect.stringMatching(/^cah\/abcdef12\//),
       linearParentTicketId: 'linear-ticket-123',
+      hasPlanningContext: false,
     });
   });
 

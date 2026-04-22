@@ -9,11 +9,12 @@
  * is provided so the handler fetches the key from Secrets Manager at cold start (T-02-18).
  */
 import * as cdk from 'aws-cdk-lib';
-import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
+import { Runtime } from 'aws-cdk-lib/aws-lambda';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Construct } from 'constructs';
 import * as path from 'node:path';
@@ -32,6 +33,8 @@ export interface CahPipelineLambdaProps {
   vpc: ec2.IVpc;
   /** ARN of the S3 pipeline bucket. */
   bucketArn: string;
+  /** Name of the S3 pipeline bucket (for CAH_ARTIFACT_BUCKET env var). */
+  bucketName: string;
   /** SQS job queue for pipeline intake messages. */
   jobQueue: sqs.IQueue;
   /** ARN of the Secrets Manager secret containing DB credentials. */
@@ -40,6 +43,14 @@ export interface CahPipelineLambdaProps {
   dbSecurityGroup: ec2.ISecurityGroup;
   /** Secrets Manager secret containing the Anthropic API key. */
   anthropicKeySecret: secretsmanager.ISecret;
+  /** Secrets Manager secret containing the GitHub PAT. */
+  githubTokenSecret: secretsmanager.ISecret;
+  /** Secrets Manager secret containing the Linear API key. */
+  linearApiKeySecret: secretsmanager.ISecret;
+  /** Secrets Manager secret containing the Daytona API key. */
+  daytonaApiKeySecret: secretsmanager.ISecret;
+  /** Secrets Manager secret containing the PostHog project API key. */
+  posthogApiKeySecret: secretsmanager.ISecret;
 }
 
 // --- Construct ---------------------------------------------------------------
@@ -71,7 +82,7 @@ export class CahPipelineLambda extends Construct {
   /** The stage queue DLQ for failed messages. */
   public readonly stageDlq: sqs.Queue;
   /** The stage-router Lambda function. */
-  public readonly stageRouterFn: lambda.Function;
+  public readonly stageRouterFn: NodejsFunction;
 
   constructor(scope: Construct, id: string, props: CahPipelineLambdaProps) {
     super(scope, id);
@@ -155,25 +166,46 @@ export class CahPipelineLambda extends Construct {
       }),
     );
 
-    // Secrets Manager -- Anthropic API key (T-02-18)
+    // Secrets Manager -- API keys for external services (T-02-18)
     role.addToPolicy(
       new iam.PolicyStatement({
-        sid: 'SecretsManagerAnthropicAccess',
+        sid: 'SecretsManagerApiKeyAccess',
         effect: iam.Effect.ALLOW,
         actions: ['secretsmanager:GetSecretValue'],
-        resources: [props.anthropicKeySecret.secretArn],
+        resources: [
+          props.anthropicKeySecret.secretArn,
+          props.githubTokenSecret.secretArn,
+          props.linearApiKeySecret.secretArn,
+          props.daytonaApiKeySecret.secretArn,
+          props.posthogApiKeySecret.secretArn,
+        ],
       }),
     );
 
     // --- Lambda Function -------------------------------------------------------
 
-    this.stageRouterFn = new lambda.Function(this, 'StageRouterFn', {
+    this.stageRouterFn = new NodejsFunction(this, 'StageRouterFn', {
       functionName: `${props.prefix}-stage-router`,
-      runtime: lambda.Runtime.NODEJS_22_X,
-      handler: 'index.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/stage-router')),
+      runtime: Runtime.NODEJS_22_X,
+      entry: path.join(__dirname, '../../../src/cloud/pipeline/stage-router.ts'),
+      projectRoot: path.join(__dirname, '../../..'),
+      handler: 'handler',
       timeout: cdk.Duration.seconds(900),
       memorySize: 512,
+      bundling: {
+        format: cdk.aws_lambda_nodejs.OutputFormat.ESM,
+        mainFields: ['module', 'main'],
+        externalModules: ['@aws-sdk/*'],
+        sourceMap: true,
+        banner: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);",
+        commandHooks: {
+          beforeBundling: () => [],
+          beforeInstall: () => [],
+          afterBundling: (inputDir: string, outputDir: string) => [
+            `cp ${inputDir}/infra/certs/rds-global-bundle.pem ${outputDir}/rds-global-bundle.pem`,
+          ],
+        },
+      },
       role,
       vpc: props.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
@@ -181,8 +213,15 @@ export class CahPipelineLambda extends Construct {
       environment: {
         STAGE_QUEUE_URL: this.stageQueue.queueUrl,
         NODE_OPTIONS: '--enable-source-maps',
+        RDS_CA_BUNDLE_PATH: '/var/task/rds-global-bundle.pem',
+        CAH_ARTIFACT_BUCKET: props.bucketName,
+        LINEAR_TEAM_ID: '3bb28d13-267e-481d-bcc3-ba0201025176',
         ANTHROPIC_API_KEY_SECRET_ARN: props.anthropicKeySecret.secretArn,
+        CAH_GITHUB_TOKEN_SECRET_ARN: props.githubTokenSecret.secretArn,
+        LINEAR_API_KEY_SECRET_ARN: props.linearApiKeySecret.secretArn,
+        DAYTONA_API_KEY_SECRET_ARN: props.daytonaApiKeySecret.secretArn,
         DB_SECRET_ARN: props.dbSecretArn,
+        POSTHOG_API_KEY_SECRET_ARN: props.posthogApiKeySecret.secretArn,
       },
     });
 

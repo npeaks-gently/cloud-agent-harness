@@ -97,6 +97,7 @@ function mapRowToPipelineRun(row: Record<string, unknown>): PipelineRun {
     repoUrl: (row.repo_url as string) ?? '',
     branch: (row.branch as string) ?? '',
     featureDescription: (row.feature_description as string) ?? '',
+    currentStage: row.current_stage as string | undefined,
     featureBranch: row.feature_branch as string | undefined,
     linearParentTicketId: row.linear_parent_ticket_id as string | undefined,
     createdAt: new Date(row.created_at as string),
@@ -314,24 +315,29 @@ export async function updateAgentRun(
  * @param token - Unique approval token (UUID) embedded in Slack buttons
  * @param slackChannel - Slack channel ID where the approval message was sent
  * @param slackMessageTs - Slack message timestamp for updating the message later
+ * @param approvalType - Type of approval ('plan_approval' or 'risk_escalation'), defaults to 'plan_approval'
  * @returns Generated UUID for the new approval row
  */
+/** Known approval types for the Slack approval gate. */
+export type ApprovalType = 'plan_approval' | 'risk_escalation';
+
 export async function insertApproval(
   pool: Pool,
   pipelineRunId: string,
   token: string,
   slackChannel: string,
   slackMessageTs: string,
+  approvalType: ApprovalType = 'plan_approval',
 ): Promise<string> {
   const sql = `
-    INSERT INTO approvals (pipeline_run_id, token, slack_channel, slack_message_ts)
-    VALUES ($1, $2, $3, $4)
+    INSERT INTO approvals (pipeline_run_id, token, slack_channel, slack_message_ts, approval_type)
+    VALUES ($1, $2, $3, $4, $5)
     ON CONFLICT (token) DO NOTHING
     RETURNING id
   `;
 
   try {
-    const result = await pool.query(sql, [pipelineRunId, token, slackChannel, slackMessageTs]);
+    const result = await pool.query(sql, [pipelineRunId, token, slackChannel, slackMessageTs, approvalType]);
     // ON CONFLICT DO NOTHING returns no rows on conflict -- return empty string
     return (result.rows[0]?.id as string) ?? '';
   } catch (err) {
@@ -360,9 +366,10 @@ export async function getApprovalByToken(
   status: string;
   slackChannel: string | null;
   requestedAt: Date;
+  approvalType: ApprovalType;
 } | null> {
   const sql = `
-    SELECT id, pipeline_run_id, status, slack_channel, requested_at
+    SELECT id, pipeline_run_id, status, slack_channel, requested_at, approval_type
     FROM approvals
     WHERE token = $1
   `;
@@ -377,6 +384,7 @@ export async function getApprovalByToken(
       status: row.status as string,
       slackChannel: row.slack_channel as string | null,
       requestedAt: new Date(row.requested_at as string),
+      approvalType: (row.approval_type as ApprovalType) ?? 'plan_approval',
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

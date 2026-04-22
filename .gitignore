@@ -66,3 +66,6 @@ vendor/
 .cache/
 tmp/
 .worktrees
+
+# Bundled Daytona entrypoint — rebuilt by scripts/build-daytona-snapshot.ts
+src/cloud/entrypoint/agent-entrypoint.js

@@ -121,11 +121,22 @@ export async function runAgentTask(
   // Resolve API key from Secrets Manager (cold-start cached)
   const anthropicApiKey = await getAnthropicApiKey();
 
+  // Forward Lambda's IAM role credentials to the sandbox so the entrypoint
+  // can reach S3 for downloadPlanningDir / uploadModifiedFiles. These are
+  // short-lived session credentials scoped to the Lambda execution and bound
+  // by the sandbox's lifetime (ephemeral, deleted after the task).
+  const awsCredEnv: Record<string, string> = {};
+  if (process.env.AWS_ACCESS_KEY_ID) awsCredEnv.AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID;
+  if (process.env.AWS_SECRET_ACCESS_KEY) awsCredEnv.AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY;
+  if (process.env.AWS_SESSION_TOKEN) awsCredEnv.AWS_SESSION_TOKEN = process.env.AWS_SESSION_TOKEN;
+  if (process.env.AWS_REGION) awsCredEnv.AWS_REGION = process.env.AWS_REGION;
+
   // Build agent task config with pipeline context env vars (D-07)
   const agentConfig: AgentTaskConfig = {
     repoUrl: config.msg.repoUrl,
     branch: config.msg.branch,
     envVars: {
+      ...awsCredEnv,
       CAH_RUN_ID: config.msg.runId,
       CAH_STAGE: config.msg.stage,
       CAH_PHASE: String(config.msg.context.phaseNumber),
@@ -173,6 +184,22 @@ export async function runAgentTask(
       costUsd: parsed.costUsd,
       artifacts: parsed.artifacts,
     };
+
+    // Non-zero exit from the sandbox: surface stdout tail to CloudWatch and
+    // persist it as the error message so debugging doesn't require manually
+    // re-creating a sandbox to reproduce.
+    if (!outcome.success) {
+      const tail = (result.stdout ?? '').slice(-2000);
+      console.error(JSON.stringify({
+        level: 'warn',
+        message: 'Sandbox task failed',
+        taskKey,
+        exitCode: result.exitCode,
+        durationMs: result.durationMs,
+        stdoutTail: tail,
+      }));
+      outcome.error = tail || `sandbox exited ${result.exitCode} with empty stdout`;
+    }
 
     await writeAgentCheckpoint(pool, taskKey, agentRunData, outcome);
     return outcome;

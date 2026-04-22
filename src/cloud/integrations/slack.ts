@@ -163,3 +163,89 @@ export async function sendApprovalMessage(
     );
   }
 }
+
+// ─── Escalation Message ────────────────────────────────────────────────────
+
+/**
+ * Sends a risk escalation message to Slack with approve/reject buttons.
+ *
+ * Follows the same pattern as sendApprovalMessage but with escalation-specific
+ * action_ids and messaging. Reuses the same Slack channel (D-05).
+ *
+ * @param channel - Slack channel ID
+ * @param runId - Pipeline run UUID
+ * @param projectId - Project identifier
+ * @param approvalToken - UUID token for approval resolution
+ * @param decisionSummary - Human-readable summary of the decision
+ * @param riskReason - Why this decision was classified as high-risk
+ * @returns Slack message timestamp
+ * @throws {SlackClientError} When the Slack API call fails
+ */
+export async function sendEscalationMessage(
+  channel: string,
+  runId: string,
+  projectId: string,
+  approvalToken: string,
+  decisionSummary: string,
+  riskReason: string,
+): Promise<string> {
+  const token = await getSlackBotToken();
+  const client = new WebClient(token);
+
+  try {
+    const result = await client.chat.postMessage({
+      channel,
+      text: `Risk escalation for run ${runId}: ${riskReason}`,
+      blocks: [
+        {
+          type: 'header',
+          text: { type: 'plain_text', text: 'Risk Escalation' },
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `*Run:* \`${runId}\`\n*Project:* \`${projectId}\`\n*Risk:* ${riskReason}\n\n${decisionSummary}`,
+          },
+        },
+        {
+          type: 'actions',
+          block_id: `escalation_${approvalToken}`,
+          elements: [
+            {
+              type: 'button',
+              text: { type: 'plain_text', text: 'Approve Decision' },
+              style: 'primary',
+              action_id: 'escalation_approve',
+              value: approvalToken,
+            },
+            {
+              type: 'button',
+              text: { type: 'plain_text', text: 'Reject Decision' },
+              style: 'danger',
+              action_id: 'escalation_reject',
+              value: approvalToken,
+            },
+          ],
+        },
+      ],
+    });
+
+    console.log(JSON.stringify({
+      level: 'info',
+      message: 'Slack escalation message sent',
+      runId,
+      channel,
+      riskReason,
+    }));
+
+    return result.ts ?? '';
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new SlackClientError(
+      `Failed to send escalation message: ${message}`,
+      'sendEscalationMessage',
+      channel,
+    );
+  }
+}

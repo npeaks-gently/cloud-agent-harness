@@ -4,20 +4,76 @@
  * Thin wrapper per D-12: client initialization, track() helper for
  * consistent event structure, and flush() for Lambda shutdown.
  *
+ * The PostHog API key is resolved from Secrets Manager via
+ * POSTHOG_API_KEY_SECRET_ARN (consistent with other secrets).
+ * Falls back to POSTHOG_API_KEY env var for local/test use.
+ *
  * @see D-12 Thin PostHog utility
  * @see D-13 Each stage Lambda imports and calls track() directly
  * @see D-14 Event naming conventions: pipeline_started, phase_transition, etc.
  */
 
 import { PostHog } from 'posthog-node';
+import {
+  SecretsManagerClient,
+  GetSecretValueCommand,
+} from '@aws-sdk/client-secrets-manager';
 
 // ─── Client ────────────────────────────────────────────────────────────────
 
 let client: PostHog | undefined;
 
-function getClient(): PostHog {
+/** True when PostHog API key is unavailable — disables all tracking silently. */
+let disabled = false;
+
+/** Cached API key resolved from Secrets Manager at first track() call. */
+let cachedApiKey: string | undefined;
+
+/**
+ * Resolves the PostHog API key from Secrets Manager or env var.
+ * Caches the result for the Lambda execution lifetime.
+ */
+async function resolveApiKey(): Promise<string | undefined> {
+  if (cachedApiKey) return cachedApiKey;
+
+  // Try Secrets Manager first (Lambda path)
+  const secretArn = process.env.POSTHOG_API_KEY_SECRET_ARN;
+  if (secretArn) {
+    try {
+      const sm = new SecretsManagerClient({
+        region: process.env.AWS_DEFAULT_REGION ?? 'us-east-1',
+      });
+      const response = await sm.send(
+        new GetSecretValueCommand({ SecretId: secretArn }),
+      );
+      if (response.SecretString) {
+        cachedApiKey = response.SecretString;
+        return cachedApiKey;
+      }
+    } catch {
+      // Fall through to env var
+    }
+  }
+
+  // Fall back to plain env var (local/test)
+  const envKey = process.env.POSTHOG_API_KEY;
+  if (envKey) {
+    cachedApiKey = envKey;
+    return cachedApiKey;
+  }
+
+  return undefined;
+}
+
+async function getClient(): Promise<PostHog | undefined> {
+  if (disabled) return undefined;
   if (!client) {
-    client = new PostHog(process.env.POSTHOG_API_KEY ?? '', {
+    const apiKey = await resolveApiKey();
+    if (!apiKey) {
+      disabled = true;
+      return undefined;
+    }
+    client = new PostHog(apiKey, {
       host: 'https://us.i.posthog.com',
       flushAt: 1,
       flushInterval: 0,
@@ -40,10 +96,14 @@ export function track(
   properties: Record<string, unknown>,
   distinctId?: string,
 ): void {
-  getClient().capture({
-    distinctId: distinctId ?? (properties.runId as string) ?? 'system',
-    event,
-    properties,
+  // Fire and forget — resolve key async, queue event if client ready
+  void getClient().then(c => {
+    if (!c) return;
+    c.capture({
+      distinctId: distinctId ?? (properties.runId as string) ?? 'system',
+      event,
+      properties,
+    });
   });
 }
 
@@ -58,4 +118,5 @@ export async function flush(): Promise<void> {
     await client.shutdown();
     client = undefined;
   }
+  disabled = false;
 }

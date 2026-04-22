@@ -28,6 +28,8 @@ export interface PipelineRun {
   branch: string;
   /** Human-readable feature description */
   featureDescription: string;
+  /** Current pipeline stage (set by stage-router and checkpoint) */
+  currentStage?: string;
   /** Feature branch name created at intake (D-05) */
   featureBranch?: string;
   /** Linear parent ticket ID created at intake (D-09) */
@@ -132,4 +134,6 @@ export interface PipelineJobMessage {
   featureDescription: string;
   /** Optional additional configuration */
   config?: Record<string, unknown>;
+  /** S3 key prefix where pre-uploaded .planning/ artifacts are stored (D-13) */
+  planningPrefix?: string;
 }

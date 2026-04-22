@@ -83,11 +83,12 @@ Plans:
   1. A pipeline triggered from the CLI questioning phase runs through research, planning, approval, execution, and PR delivery with zero human interaction after Slack approval
   2. The LLM auto-decision agent handles routine decisions (naming, file placement, implementation approach) without pausing the pipeline, and logs each decision to a DECISIONS.md audit trail
   3. High-risk decisions (architecture changes, dependency additions, scope questions) escalate to Slack for human approval rather than being auto-decided
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 04-01: TBD
-- [ ] 04-02: TBD
+- [x] 04-01-PLAN.md — Type contract extensions (planningPrefix, PhaseStepType.AutoDecide), approval_type migration, insertApproval update, and stage-router planningPrefix forwarding (PIPE-02, PIPE-03)
+- [x] 04-02-PLAN.md — Auto-decider agent definition, sendEscalationMessage, runAutoDecideStep in PhaseRunner, and webhook handler escalation support (PIPE-03)
+- [x] 04-03-PLAN.md — cah-dispatch CLI script (S3 upload + SQS send) and intake stage planning download extension (PIPE-02)
 
 ### Phase 5: Observability & CLI
 **Goal**: Operators can monitor pipeline health, query run status from the CLI, and inspect per-agent telemetry for debugging and cost tracking
@@ -113,5 +114,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 1. AWS Foundation & Agent Runtime | 3/3 | Complete    | 2026-04-16 |
 | 2. Pipeline Orchestration & State Management | 0/5 | Not started | - |
 | 3. Integrations | 0/5 | Not started | - |
-| 4. Headless Pipeline | 0/2 | Not started | - |
+| 4. Headless Pipeline | 0/3 | Not started | - |
 | 5. Observability & CLI | 0/2 | Not started | - |

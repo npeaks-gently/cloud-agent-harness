@@ -43,6 +43,8 @@ export interface CahSlackWebhookProps {
   slackSigningSecret: secretsmanager.ISecret;
   /** Secrets Manager secret for Slack bot token (for message updates). */
   slackBotToken: secretsmanager.ISecret;
+  /** Secrets Manager secret for PostHog project API key. */
+  posthogApiKeySecret: secretsmanager.ISecret;
 }
 
 // --- Construct ---------------------------------------------------------------
@@ -134,6 +136,7 @@ export class CahSlackWebhook extends Construct {
           props.slackSigningSecret.secretArn,
           props.slackBotToken.secretArn,
           props.dbSecretArn,
+          props.posthogApiKeySecret.secretArn,
         ],
       }),
     );
@@ -172,6 +175,7 @@ export class CahSlackWebhook extends Construct {
         STAGE_QUEUE_URL: props.stageQueueUrl,
         SLACK_SIGNING_SECRET_ARN: props.slackSigningSecret.secretArn,
         DB_SECRET_ARN: props.dbSecretArn,
+        POSTHOG_API_KEY_SECRET_ARN: props.posthogApiKeySecret.secretArn,
       },
     });
 
