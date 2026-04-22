@@ -110,6 +110,19 @@ export interface StageResult {
 }
 
 /**
+ * Token usage breakdown reported by an agent task.
+ *
+ * Mirrors the SDK's SessionUsage. Cache tokens dominate Anthropic cost
+ * calculations so they are tracked separately from input/output.
+ */
+export interface AgentUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+}
+
+/**
  * Outcome of a single agent task within a pipeline stage.
  *
  * Each stage may dispatch one or more agent tasks (e.g., execute stage
@@ -130,6 +143,10 @@ export interface AgentTaskOutcome {
   artifacts: string[];
   /** Error message if the task failed */
   error?: string;
+  /** Token usage breakdown (undefined when sandbox stdout did not include it). */
+  usage?: AgentUsage;
+  /** Concrete model ID that executed the task (e.g., "claude-sonnet-4-6"). */
+  model?: string;
 }
 
 // --- Idempotent upsert data --------------------------------------------------

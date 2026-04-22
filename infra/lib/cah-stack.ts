@@ -106,6 +106,24 @@ export class CahStack extends cdk.Stack {
       'arn:aws:secretsmanager:us-east-1:659828095854:secret:cah-dev-posthog-api-key-oLQF8n',
     );
 
+    // --- Slack secrets (used by both pipeline + webhook) -----------------------
+
+    const slackSigningSecret = secretsmanager.Secret.fromSecretCompleteArn(
+      this,
+      'SlackSigningSecret',
+      'arn:aws:secretsmanager:us-east-1:659828095854:secret:cah-dev-slack-signing-secret-dAlcJ9',
+    );
+
+    const slackBotToken = secretsmanager.Secret.fromSecretCompleteArn(
+      this,
+      'SlackBotToken',
+      'arn:aws:secretsmanager:us-east-1:659828095854:secret:cah-dev-slack-bot-token-VPynMv',
+    );
+
+    // Direct-message channel: posting to a U-prefixed user ID with chat.postMessage
+    // opens (or reuses) the bot's IM with that user.
+    const slackApprovalChannel = 'U0A6ZENN1D5';
+
     const pipeline = new CahPipelineLambda(this, 'Pipeline', {
       prefix: PREFIX,
       vpc: networking.vpc,
@@ -119,21 +137,11 @@ export class CahStack extends cdk.Stack {
       linearApiKeySecret,
       daytonaApiKeySecret,
       posthogApiKeySecret,
+      slackBotTokenSecret: slackBotToken,
+      slackApprovalChannel,
     });
 
     // --- Slack Webhook ----------------------------------------------------------
-
-    const slackSigningSecret = secretsmanager.Secret.fromSecretCompleteArn(
-      this,
-      'SlackSigningSecret',
-      'arn:aws:secretsmanager:us-east-1:659828095854:secret:cah-dev-slack-signing-secret-dAlcJ9',
-    );
-
-    const slackBotToken = secretsmanager.Secret.fromSecretCompleteArn(
-      this,
-      'SlackBotToken',
-      'arn:aws:secretsmanager:us-east-1:659828095854:secret:cah-dev-slack-bot-token-VPynMv',
-    );
 
     const slackWebhook = new CahSlackWebhook(this, 'SlackWebhook', {
       prefix: PREFIX,

@@ -54,8 +54,13 @@ export async function writeAgentCheckpoint(
       duration_ms = $2,
       artifacts = $3,
       error_message = $4,
+      input_tokens = $5,
+      output_tokens = $6,
+      cache_read_tokens = $7,
+      cache_creation_tokens = $8,
+      model = $9,
       completed_at = NOW()
-    WHERE task_key = $5
+    WHERE task_key = $10
   `;
 
   try {
@@ -64,6 +69,11 @@ export async function writeAgentCheckpoint(
       outcome.durationMs,
       JSON.stringify(outcome.artifacts),
       outcome.error ?? null,
+      outcome.usage?.inputTokens ?? 0,
+      outcome.usage?.outputTokens ?? 0,
+      outcome.usage?.cacheReadInputTokens ?? 0,
+      outcome.usage?.cacheCreationInputTokens ?? 0,
+      outcome.model ?? null,
       taskKey,
     ]);
   } catch (err) {

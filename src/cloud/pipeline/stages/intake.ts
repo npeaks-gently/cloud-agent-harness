@@ -61,9 +61,11 @@ export async function handleIntakeStage(
   pool: Pool,
 ): Promise<StageResult> {
   // Step 1: Insert pipeline_run record (idempotent via ON CONFLICT)
+  // phase_current is seeded from the incoming context so the slack-handler
+  // resume reads the correct phase when it builds the post-approval StageMessage.
   const sql = `
-    INSERT INTO pipeline_runs (id, project_id, phase_total, config, status, repo_url, branch, feature_description)
-    VALUES ($1::uuid, $2, $3, $4, 'running', $5, $6, $7)
+    INSERT INTO pipeline_runs (id, project_id, phase_current, phase_total, config, status, repo_url, branch, feature_description)
+    VALUES ($1::uuid, $2, $3, $4, $5, 'running', $6, $7, $8)
     ON CONFLICT (id) DO NOTHING
   `;
 
@@ -71,6 +73,7 @@ export async function handleIntakeStage(
     await pool.query(sql, [
       msg.runId,
       msg.projectId,
+      msg.context.phaseNumber,
       msg.context.phaseTotal,
       JSON.stringify({ featureDescription: msg.context.featureDescription }),
       msg.repoUrl,

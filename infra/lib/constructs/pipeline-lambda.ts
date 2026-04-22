@@ -51,6 +51,10 @@ export interface CahPipelineLambdaProps {
   daytonaApiKeySecret: secretsmanager.ISecret;
   /** Secrets Manager secret containing the PostHog project API key. */
   posthogApiKeySecret: secretsmanager.ISecret;
+  /** Secrets Manager secret containing the Slack bot token (for approval messages). */
+  slackBotTokenSecret: secretsmanager.ISecret;
+  /** Slack channel / user ID that approval messages are posted to. */
+  slackApprovalChannel: string;
 }
 
 // --- Construct ---------------------------------------------------------------
@@ -178,6 +182,7 @@ export class CahPipelineLambda extends Construct {
           props.linearApiKeySecret.secretArn,
           props.daytonaApiKeySecret.secretArn,
           props.posthogApiKeySecret.secretArn,
+          props.slackBotTokenSecret.secretArn,
         ],
       }),
     );
@@ -222,6 +227,8 @@ export class CahPipelineLambda extends Construct {
         DAYTONA_API_KEY_SECRET_ARN: props.daytonaApiKeySecret.secretArn,
         DB_SECRET_ARN: props.dbSecretArn,
         POSTHOG_API_KEY_SECRET_ARN: props.posthogApiKeySecret.secretArn,
+        SLACK_BOT_TOKEN_SECRET_ARN: props.slackBotTokenSecret.secretArn,
+        SLACK_APPROVAL_CHANNEL: props.slackApprovalChannel,
       },
     });
 

@@ -128,6 +128,7 @@ describe('sandbox-task', () => {
         CAH_STAGE: PipelineStage.Execute,
         CAH_PHASE: '2',
         CAH_PLAN: '02-01',
+        CAH_WAVE: '1',
         CAH_BUCKET: MOCK_BUCKET,
         CAH_REPO_URL: 'https://github.com/org/repo',
         CAH_BRANCH: 'main',

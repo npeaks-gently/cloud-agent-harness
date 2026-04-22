@@ -8,6 +8,9 @@
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type GSDClass = new (options: Record<string, unknown>) => any;
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type LoadConfigFn = (projectDir: string, workstream?: string) => Promise<any>;
+
 /**
  * Dynamically loads the GSD SDK module.
  *
@@ -17,10 +20,10 @@ type GSDClass = new (options: Record<string, unknown>) => any;
  * module on disk so its `import.meta.url`-relative lookups (prompts/,
  * gsd-tools.cjs) resolve to the deployed harness tree.
  *
- * @returns Object containing the GSD class constructor
+ * @returns Object containing the GSD class constructor and loadConfig helper
  */
-export async function loadSdk(): Promise<{ GSD: GSDClass }> {
+export async function loadSdk(): Promise<{ GSD: GSDClass; loadConfig: LoadConfigFn }> {
   const sdkPath = process.env.CAH_SDK_PATH ?? '/harness/sdk/dist/index.js';
   const mod = await import(sdkPath);
-  return { GSD: mod.GSD };
+  return { GSD: mod.GSD, loadConfig: mod.loadConfig };
 }

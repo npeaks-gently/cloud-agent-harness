@@ -48,52 +48,40 @@ export async function handleExecuteStage(
   client: DaytonaClient,
   bucket: string,
 ): Promise<StageResult> {
-  // Plan count from pipeline context (set by planner, defaults to 1).
-  // Validate at runtime: JSON deserialization may yield a string, so coerce safely.
-  const rawPlanCount = (msg.context as Record<string, unknown>).planCount;
-  const planCount = typeof rawPlanCount === 'number' && rawPlanCount > 0
-    ? rawPlanCount
-    : 1;
+  // Single sandbox dispatch per phase. The sandbox runs gsd.runPhase(phase),
+  // which iterates the GSD-internal plan list for that phase in one process.
+  // The per-cloud-plan loop the previous implementation tried to drive
+  // didn't match the SDK API (executePlan expects a path, not an ID).
+  // Phase 5 will revisit fan-out / parallelism if needed.
+  const planName = 'execute-main';
+  const wave = 1;
+  const taskKey = buildTaskId(msg.runId, 'execute', planName, wave);
 
-  // Get all completed tasks for this run's execute stage (resume support, D-13)
   const completed = await getCompletedTasks(pool, msg.runId, 'execute');
+  if (completed.includes(taskKey)) {
+    return { stage: PipelineStage.Execute, status: 'completed', tasks: [] };
+  }
 
-  const allOutcomes: AgentTaskOutcome[] = [];
+  const result = await runAgentTask(client, pool, bucket, {
+    msg,
+    plan: planName,
+    wave,
+    command: 'node /harness/entrypoint.js',
+    timeoutSeconds: 1800,
+  });
 
-  // Iterate plans sequentially (parallel deferred to v2 EXEC-02)
-  for (let plan = 1; plan <= planCount; plan++) {
-    const planName = `execute-${String(plan).padStart(2, '0')}`;
-    const taskKey = buildTaskId(msg.runId, 'execute', planName, 1);
-
-    // Skip already-completed plans
-    if (completed.includes(taskKey)) {
-      continue;
-    }
-
-    // Dispatch executor agent to Daytona (D-11)
-    const result = await runAgentTask(client, pool, bucket, {
-      msg,
-      plan: planName,
-      wave: 1,
-      command: 'node /harness/entrypoint.js',
-    });
-
-    allOutcomes.push(result);
-
-    // Stop on first failure
-    if (!result.success) {
-      return {
-        stage: PipelineStage.Execute,
-        status: 'failed',
-        tasks: allOutcomes,
-        error: `Plan ${planName} failed`,
-      };
-    }
+  if (!result.success) {
+    return {
+      stage: PipelineStage.Execute,
+      status: 'failed',
+      tasks: [result],
+      error: `Execute stage failed: ${result.error ?? 'no error message'}`,
+    };
   }
 
   return {
     stage: PipelineStage.Execute,
     status: 'completed',
-    tasks: allOutcomes,
+    tasks: [result],
   };
 }

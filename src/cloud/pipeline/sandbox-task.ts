@@ -14,7 +14,7 @@ import type { Pool } from 'pg';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import type { DaytonaClient } from '../daytona-client.js';
 import type { AgentTaskConfig } from '../types.js';
-import type { StageMessage, AgentTaskOutcome, AgentRunData } from './types.js';
+import type { StageMessage, AgentTaskOutcome, AgentRunData, AgentUsage } from './types.js';
 import { PipelineError } from './types.js';
 import { buildTaskId } from './idempotency.js';
 import { writeAgentCheckpoint } from './checkpoint.js';
@@ -23,6 +23,8 @@ import { writeAgentCheckpoint } from './checkpoint.js';
 
 /** Cached Anthropic API key resolved from Secrets Manager at Lambda cold start. */
 let cachedApiKey: string | undefined;
+/** Cached GitHub token resolved from Secrets Manager at Lambda cold start. */
+let cachedGitHubToken: string | undefined;
 
 /**
  * Fetches the Anthropic API key from Secrets Manager and caches it.
@@ -50,6 +52,29 @@ export async function getAnthropicApiKey(): Promise<string> {
   }
   cachedApiKey = response.SecretString;
   return cachedApiKey;
+}
+
+/**
+ * Fetches the GitHub PAT from Secrets Manager and caches it.
+ * Mirrors getAnthropicApiKey: secret ARN comes from CAH_GITHUB_TOKEN_SECRET_ARN
+ * (already wired by pipeline-lambda CDK construct), cached for the Lambda
+ * execution lifetime, never logged.
+ */
+export async function getGitHubToken(): Promise<string> {
+  if (cachedGitHubToken) return cachedGitHubToken;
+  const secretArn = process.env.CAH_GITHUB_TOKEN_SECRET_ARN;
+  if (!secretArn) throw new Error('CAH_GITHUB_TOKEN_SECRET_ARN not set');
+  const smClient = new SecretsManagerClient({
+    region: process.env.AWS_DEFAULT_REGION ?? 'us-east-1',
+  });
+  const response = await smClient.send(
+    new GetSecretValueCommand({ SecretId: secretArn }),
+  );
+  if (!response.SecretString) {
+    throw new Error('Secrets Manager returned empty SecretString');
+  }
+  cachedGitHubToken = response.SecretString;
+  return cachedGitHubToken;
 }
 
 // --- Types -------------------------------------------------------------------
@@ -131,16 +156,27 @@ export async function runAgentTask(
   if (process.env.AWS_SESSION_TOKEN) awsCredEnv.AWS_SESSION_TOKEN = process.env.AWS_SESSION_TOKEN;
   if (process.env.AWS_REGION) awsCredEnv.AWS_REGION = process.env.AWS_REGION;
 
+  // Git context for the entrypoint's task-branch + commitAndPush flow.
+  // Without these the entrypoint runs the agent but pushes nothing.
+  const gitEnv: Record<string, string> = {};
+  if (config.msg.context.featureBranch) {
+    gitEnv.CAH_FEATURE_BRANCH = config.msg.context.featureBranch;
+    // Only resolve the GH token when there is a feature branch to push to.
+    gitEnv.CAH_GITHUB_TOKEN = await getGitHubToken();
+  }
+
   // Build agent task config with pipeline context env vars (D-07)
   const agentConfig: AgentTaskConfig = {
     repoUrl: config.msg.repoUrl,
     branch: config.msg.branch,
     envVars: {
       ...awsCredEnv,
+      ...gitEnv,
       CAH_RUN_ID: config.msg.runId,
       CAH_STAGE: config.msg.stage,
       CAH_PHASE: String(config.msg.context.phaseNumber),
       CAH_PLAN: config.plan,
+      CAH_WAVE: String(config.wave),
       CAH_BUCKET: bucket,
       CAH_REPO_URL: config.msg.repoUrl,
       CAH_BRANCH: config.msg.branch,
@@ -163,7 +199,13 @@ export async function runAgentTask(
 
     // Parse JSON result from stdout (T-02-09: try/catch with fallback)
     // The entrypoint script writes a JSON line as the last output line
-    let parsed: { success: boolean; costUsd: number; artifacts: string[] } = {
+    let parsed: {
+      success: boolean;
+      costUsd: number;
+      artifacts: string[];
+      usage?: AgentUsage;
+      model?: string;
+    } = {
       success: result.exitCode === 0,
       costUsd: 0,
       artifacts: [],
@@ -183,6 +225,8 @@ export async function runAgentTask(
       durationMs: result.durationMs,
       costUsd: parsed.costUsd,
       artifacts: parsed.artifacts,
+      usage: parsed.usage,
+      model: parsed.model,
     };
 
     // Non-zero exit from the sandbox: surface stdout tail to CloudWatch and
