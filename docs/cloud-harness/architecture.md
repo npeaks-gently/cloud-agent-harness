@@ -274,21 +274,29 @@ Every agent task boundary writes a checkpoint to Postgres. If the pipeline dies 
        │  1. Build task key (runId:phase:plan:wave)
        │  2. Check if already completed (skip)
        │  3. DaytonaClient.executeTask()
-       │     └── Create sandbox (node:22-slim snapshot)
-       │         Clone repo, inject CAH_* env vars
-       │         Run agent-entrypoint.ts
+       │     └── Create sandbox from snapshot 'cah-harness-v1'
+       │         (pre-baked: /harness/entrypoint.js bundle,
+       │          /harness/sdk/dist, /harness/node_modules,
+       │          /harness/agents, /harness/commands,
+       │          /harness/get-shit-done)
+       │         Clone target repo into /home/daytona/workspace
+       │         Inject CAH_* env vars
+       │         Run `node /harness/entrypoint.js`
        │         Return stdout + exit code
        │  4. Write checkpoint (success or failure)
        ▼
-  agent-entrypoint.ts (inside Daytona sandbox)
+  /harness/entrypoint.js (bundled entrypoint in Daytona sandbox)
        │  1. Read CAH_* env vars
        │  2. Download .planning/ from S3
-       │  3. SDK dispatch by stage:
+       │  3. loadSdk() → dynamic import('/harness/sdk/dist/index.js')
+       │     (SDK is externalized so its import.meta.url-relative
+       │      lookups for prompts/ and gsd-tools.cjs resolve on disk)
+       │  4. SDK dispatch by stage:
        │     research/plan/verify → gsd.runPhase()
        │     execute → gsd.executePlan()
-       │  4. git diff --name-only HEAD
-       │  5. Upload modified files to S3
-       │  6. Write JSON result to stdout
+       │  5. git status --porcelain → modified files
+       │  6. Upload modified files to S3
+       │  7. Write JSON result to stdout
        ▼
 ```
 
@@ -665,14 +673,14 @@ src/cloud/
 
 ```
 DaytonaClient.executeTask(config)
-  1. Create sandbox (2 vCPU / 4 GB default)
+  1. Create sandbox from snapshot 'cah-harness-v1' (2 vCPU / 4 GB default)
   2. Clone repo into /home/daytona/workspace
   3. Execute command with env vars
   4. Return { exitCode, stdout, durationMs }
   5. ALWAYS delete sandbox in finally block (prevents cost leaks)
 ```
 
-The SDK instance is reused across calls. All errors wrapped in `DaytonaClientError` with operation name and sandbox ID.
+The SDK instance is reused across calls. All errors wrapped in `DaytonaClientError` with operation name and sandbox ID. The snapshot name comes from `getSnapshotName()` in `snapshot-manager.ts` -- without it, `daytona.create()` falls back to Daytona's default image which has no `/harness/` tree.
 
 #### `s3-artifacts.ts` -- Artifact Storage
 
@@ -842,20 +850,57 @@ Post-handler: writes checkpoint via `updatePipelineStage()`, sends next-stage SQ
 src/cloud/entrypoint/
 ├── agent-entrypoint.ts   Sandbox entry point: env vars -> S3 download -> SDK dispatch -> upload
 ├── s3-sync.ts            downloadPlanningDir() + uploadModifiedFiles()
-└── sdk-loader.ts         Thin wrapper for dynamic SDK import (testability)
+└── sdk-loader.ts         Dynamic SDK import via CAH_SDK_PATH (default /harness/sdk/dist/index.js)
 ```
 
-- **Config via `CAH_*` env vars**: `CAH_RUN_ID`, `CAH_STAGE`, `CAH_PHASE`, `CAH_PLAN`, `CAH_BUCKET`, `CAH_REPO_URL`, `CAH_BRANCH`
+- **Config via `CAH_*` env vars**: `CAH_RUN_ID`, `CAH_STAGE`, `CAH_PHASE`, `CAH_PLAN`, `CAH_BUCKET`, `CAH_REPO_URL`, `CAH_BRANCH`, `CAH_SDK_PATH` (optional override)
 - **SDK dispatch by stage**: research/plan/verify -> `gsd.runPhase()`, execute -> `gsd.executePlan()`
-- **Artifact flow**: download `.planning/` from S3 at start, `git diff` for modified files, upload to S3 at end
+- **Artifact flow**: download `.planning/` from S3 at start, `git status --porcelain` for modified files, upload to S3 at end
+- **Bundle**: `scripts/build-entrypoint.mjs` esbuilds `agent-entrypoint.ts` into a single ~48 KB ESM file with internal deps inlined (s3-sync, analytics, env validation) and npm packages externalized. The SDK is deliberately externalized via a dynamic `await import(sdkPath)` so esbuild cannot inline it -- the SDK must stay on disk so its `import.meta.url`-relative lookups resolve.
 
 ### Daytona Snapshot (`src/cloud/snapshot/`)
 
 ```
 src/cloud/snapshot/
 ├── image-builder.ts      Declarative Image.base('node:22-slim') with git, npm ci, entrypoint
-└── snapshot-manager.ts   createOrUpdateSnapshot('cah-harness-v1', 300s timeout)
+└── snapshot-manager.ts   createOrUpdateSnapshot('cah-harness-v1', delete-then-create)
 ```
+
+**Snapshot name**: `cah-harness-v1` (fixed; version bumps replace in place via delete + create, since Daytona has no in-place update API).
+
+**Image layout inside the sandbox**:
+
+```
+/harness/
+├── entrypoint.js               ~48 KB esbuild bundle (renamed from agent-entrypoint.js)
+├── sdk/
+│   ├── dist/index.js           SDK compiled to JS via `tsc`; loaded by entrypoint
+│   ├── prompts/                agents/ templates/ workflows/ (read by SDK at runtime)
+│   └── package.json + src/     retained for compatibility with import.meta.url walks
+├── agents/                     agent definition .md files
+├── commands/                   slash-command prompts
+├── get-shit-done/              CJS CLI + workflow templates
+│                               (bin/gsd-tools.cjs is executed by SDK)
+├── package.json                root manifest
+├── package-lock.json
+└── node_modules/               hoisted npm deps from `npm ci --production`:
+                                @anthropic-ai/claude-agent-sdk, @aws-sdk/*,
+                                pg, posthog-node, ws, etc.
+```
+
+**Publish pipeline** (`scripts/build-daytona-snapshot.ts`):
+
+```
+1. cd sdk && npm run build          # tsc -> sdk/dist/*
+2. node scripts/build-entrypoint.mjs # esbuild -> agent-entrypoint.js
+3. chdir repo root                   # Daytona SDK reads addLocalDir relative to CWD
+4. daytona.snapshot.get(name)        # if exists, delete + poll until gone
+5. daytona.snapshot.create({ name, image }, { onLogs, timeout: 600 })
+```
+
+The image.build-* docker steps stream via `onLogs`; total publish is ~60-75s cold.
+
+**Why the SDK is externalized (not bundled)**: the SDK does `join(fileURLToPath(new URL('.', import.meta.url)), '..', 'prompts')` to find `<sdk>/prompts/` and `new URL('../../get-shit-done/bin/gsd-tools.cjs', import.meta.url)` to find the CJS CLI. If the SDK is inlined into `/harness/entrypoint.js`, those URLs resolve against `/harness/` instead of `/harness/sdk/dist/` and both lookups fail. Keeping the SDK as a standalone module at `/harness/sdk/dist/index.js` preserves the correct path base.
 
 ### Pipeline Lambda CDK Construct (`infra/lib/constructs/pipeline-lambda.ts`)
 
@@ -959,4 +1004,4 @@ src/cloud/snapshot/
 
 ---
 
-*Last updated: 2026-04-17 (Phases 1-4 complete, Phase 5 planned)*
+*Last updated: 2026-04-22 (Phases 1-4 complete, Daytona snapshot live, Phase 5 planned)*
