@@ -16,7 +16,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 2: Pipeline Orchestration & State Management** - Lambda+SQS pipeline with checkpoint/resume and storage abstraction for agent pull/push
 - [ ] **Phase 3: Integrations** - Slack approval workflow, Git/PR delivery, Linear tracking, and PostHog event instrumentation
 - [ ] **Phase 4: Headless Pipeline** - Replace interactive questioning with LLM auto-decisions and enable fully autonomous pipeline execution
-- [ ] **Phase 5: Observability & CLI** - PostHog-based run tracking, CLI status queries, and Postgres-backed agent session telemetry
+- [ ] **Phase 5: Pipeline Restructure** - Project-level research + roadmap synthesis, single Slack approval, autonomous phase loop, and one-PR commit accumulation
+- [ ] **Phase 6: Observability & CLI** - PostHog-based run tracking, CLI status queries, and Postgres-backed agent session telemetry
 
 ## Phase Details
 
@@ -90,9 +91,24 @@ Plans:
 - [x] 04-02-PLAN.md — Auto-decider agent definition, sendEscalationMessage, runAutoDecideStep in PhaseRunner, and webhook handler escalation support (PIPE-03)
 - [x] 04-03-PLAN.md — cah-dispatch CLI script (S3 upload + SQS send) and intake stage planning download extension (PIPE-02)
 
-### Phase 5: Observability & CLI
-**Goal**: Operators can monitor pipeline health, query run status from the CLI, and inspect per-agent telemetry for debugging and cost tracking
+### Phase 5: Pipeline Restructure
+**Goal**: The cloud pipeline runs a project end-to-end from one local `/gsd-new-project` through one Slack approval to one PR containing every phase's commits, with no human interaction between approval and PR
 **Depends on**: Phase 4
+**Requirements**: PIPE-05, PIPE-06, PIPE-07, PIPE-08
+**Success Criteria** (what must be TRUE):
+  1. A pipeline triggered from `cah-dispatch` runs project-research -> roadmap-synthesis -> project-approve (one Slack message) -> per-phase {plan -> execute -> verify} loop -> pr, with zero human interaction after the single approval click
+  2. Every phase's execute sandbox commits to `featureBranch` (no per-stage task branches, no merge-executor); the final PR contains commits from every phase in order
+  3. Each sandbox hydrates its workspace from git (for target-repo code) plus S3 (for `.planning/`); `.planning/` never enters the target repo's PR
+  4. The Slack approval message shows a summary card (project name, core value, phase count, phase list, est cost range) + links to a GitHub gist containing the full PROJECT.md and ROADMAP.md; Approve resumes the pipeline, Reject marks the run failed and closes the Linear ticket
+  5. Transient failures (rate limits, network, sandbox cold-start crash) auto-retry with backoff; permanent failures (verify rejection, GSD can't-proceed, auto-decider stuck on scope) pause with a Slack resume/abort DM; N permanent failures across the run trigger a single hard-abort notification
+**Plans**: TBD
+
+Plans:
+- [ ] 05-01: TBD
+
+### Phase 6: Observability & CLI
+**Goal**: Operators can monitor pipeline health, query run status from the CLI, and inspect per-agent telemetry for debugging and cost tracking
+**Depends on**: Phase 5
 **Requirements**: OBS-01, OBS-02, OBS-03
 **Success Criteria** (what must be TRUE):
   1. PostHog displays current phase, cumulative cost, and completion status for any active or completed pipeline run
@@ -101,13 +117,13 @@ Plans:
 **Plans**: TBD
 
 Plans:
-- [ ] 05-01: TBD
-- [ ] 05-02: TBD
+- [ ] 06-01: TBD
+- [ ] 06-02: TBD
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -115,4 +131,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 2. Pipeline Orchestration & State Management | 0/5 | Not started | - |
 | 3. Integrations | 0/5 | Not started | - |
 | 4. Headless Pipeline | 0/3 | Not started | - |
-| 5. Observability & CLI | 0/2 | Not started | - |
+| 5. Pipeline Restructure | 0/TBD | Not started | - |
+| 6. Observability & CLI | 0/TBD | Not started | - |

@@ -21,6 +21,11 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **PIPE-02**: Headless pipeline execution with no human interaction after initial questioning phase
 - [ ] **PIPE-03**: Interaction abstraction replacing AskUserQuestion with LLM agent for autonomous decisions
 - [ ] **PIPE-04**: Codebase context provisioning via S3 so cloud agents can reference the monorepo map
+- [ ] **PIPE-05**: Project-level research and roadmap synthesis stages that produce PROJECT.md + ROADMAP.md in the cloud from the `/gsd-new-project` seed, replacing per-phase research
+- [ ] **PIPE-06**: Single project-level Slack approval gate with summary-card message and GitHub gist preview links, replacing per-phase plan approval (supersedes INTG-01 for the approval UX)
+- [ ] **PIPE-07**: Stage-router-driven autonomous phase loop: after `verify`, the router reads ROADMAP.md from S3 and either re-enqueues `plan` for phase+1 or advances to `pr`
+- [ ] **PIPE-08**: Per-run commit accumulation on featureBranch with hybrid workspace hydration (git for code, S3 for `.planning/`); all phases commit to the same branch so one PR contains every phase's work
+- [ ] **PIPE-09**: Failure classification with transient auto-retry + permanent fail-fast + hard-abort after N permanent failures across a run
 
 ### State Management
 
@@ -105,15 +110,20 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INTG-02 | Phase 3: Integrations | Pending |
 | INTG-03 | Phase 3: Integrations | Pending |
 | INTG-04 | Phase 3: Integrations | Pending |
-| OBS-01 | Phase 5: Observability & CLI | Pending |
-| OBS-02 | Phase 5: Observability & CLI | Pending |
-| OBS-03 | Phase 5: Observability & CLI | Pending |
+| PIPE-05 | Phase 5: Pipeline Restructure | Pending |
+| PIPE-06 | Phase 5: Pipeline Restructure | Pending |
+| PIPE-07 | Phase 5: Pipeline Restructure | Pending |
+| PIPE-08 | Phase 5: Pipeline Restructure | Pending |
+| PIPE-09 | Phase 5: Pipeline Restructure | Pending |
+| OBS-01 | Phase 6: Observability & CLI | Pending |
+| OBS-02 | Phase 6: Observability & CLI | Pending |
+| OBS-03 | Phase 6: Observability & CLI | Pending |
 
 **Coverage:**
-- v1 requirements: 20 total
-- Mapped to phases: 20
+- v1 requirements: 25 total
+- Mapped to phases: 25
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-15*
-*Last updated: 2026-04-15 after roadmap creation*
+*Last updated: 2026-04-22 after Phase 5 scope change (pipeline restructure; Observability moved to Phase 6)*
