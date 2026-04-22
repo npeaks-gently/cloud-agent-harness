@@ -38,9 +38,7 @@ export class CahNetworking extends Construct {
       vpcName: `${props.prefix}-vpc`,
       ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/16'),
       maxAzs: 2,
-      // Single-AZ NAT gateway (~$32/month) gives VPC Lambdas outbound internet
-      // for GitHub / Daytona / Slack / Linear / Anthropic / PostHog API calls.
-      natGateways: 1,
+      natGateways: 0,
       subnetConfiguration: [
         {
           name: 'Public',
@@ -50,11 +48,6 @@ export class CahNetworking extends Construct {
         {
           name: 'Isolated',
           subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
-          cidrMask: 24,
-        },
-        {
-          name: 'PrivateEgress',
-          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
           cidrMask: 24,
         },
       ],
