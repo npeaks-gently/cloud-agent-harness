@@ -110,6 +110,7 @@ export class CahStack extends cdk.Stack {
       prefix: PREFIX,
       vpc: networking.vpc,
       bucketArn: storage.bucket.bucketArn,
+      bucketName: storage.bucket.bucketName,
       jobQueue: messaging.queue,
       dbSecretArn: database.secret.secretArn,
       dbSecurityGroup: database.securityGroup,

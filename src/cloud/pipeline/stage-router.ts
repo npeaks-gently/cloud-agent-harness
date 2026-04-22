@@ -16,8 +16,14 @@
 
 import { randomUUID } from 'node:crypto';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import {
+  SecretsManagerClient,
+  GetSecretValueCommand,
+} from '@aws-sdk/client-secrets-manager';
 import type { Pool } from 'pg';
-import type { DaytonaClient } from '../daytona-client.js';
+import type { SQSEvent } from 'aws-lambda';
+import { DaytonaClient } from '../daytona-client.js';
+import { createDbPool } from '../postgres-client.js';
 import type { PipelineJobMessage } from '../types.js';
 import {
   PipelineStage,
@@ -307,3 +313,65 @@ export async function routeStage(
   await flush();
   return result;
 }
+
+// --- Lambda entry point ------------------------------------------------------
+
+/** Module-scoped caches reused across warm Lambda invocations. */
+let _pool: Pool | undefined;
+let _daytonaClient: DaytonaClient | undefined;
+
+async function fetchSecret(arn: string): Promise<string> {
+  const sm = new SecretsManagerClient({ region: process.env.AWS_DEFAULT_REGION ?? 'us-east-1' });
+  const resp = await sm.send(new GetSecretValueCommand({ SecretId: arn }));
+  if (!resp.SecretString) throw new Error(`Secret ${arn} is empty`);
+  return resp.SecretString;
+}
+
+async function getPool(): Promise<Pool> {
+  if (_pool) return _pool;
+  let dbUrl = process.env.DATABASE_URL;
+  if (!dbUrl) {
+    const arn = process.env.DB_SECRET_ARN;
+    if (!arn) throw new Error('Neither DATABASE_URL nor DB_SECRET_ARN is set');
+    const creds = JSON.parse(await fetchSecret(arn)) as {
+      username: string; password: string; host: string; port: number; dbname: string;
+    };
+    dbUrl = `postgresql://${creds.username}:${encodeURIComponent(creds.password)}@${creds.host}:${creds.port}/${creds.dbname}`;
+  }
+  _pool = createDbPool(dbUrl);
+  return _pool;
+}
+
+async function getDaytonaClient(): Promise<DaytonaClient> {
+  if (_daytonaClient) return _daytonaClient;
+  let apiKey = process.env.DAYTONA_API_KEY;
+  if (!apiKey) {
+    const arn = process.env.DAYTONA_API_KEY_SECRET_ARN;
+    if (!arn) throw new Error('Neither DAYTONA_API_KEY nor DAYTONA_API_KEY_SECRET_ARN is set');
+    apiKey = await fetchSecret(arn);
+  }
+  _daytonaClient = new DaytonaClient({ apiKey });
+  return _daytonaClient;
+}
+
+/**
+ * Lambda handler entry point for pipeline stage routing.
+ *
+ * Invoked by SQS event sources on both the job queue and the stage queue.
+ * Event source mappings use batchSize: 1 so each invocation processes
+ * exactly one message -- on failure we let the error propagate so SQS
+ * retries the message (eventually to DLQ after maxReceiveCount).
+ */
+export const handler = async (event: SQSEvent): Promise<void> => {
+  const pool = await getPool();
+  const client = await getDaytonaClient();
+
+  const bucket = process.env.CAH_ARTIFACT_BUCKET;
+  if (!bucket) throw new Error('CAH_ARTIFACT_BUCKET env var is not set');
+  const stageQueueUrl = process.env.STAGE_QUEUE_URL;
+  if (!stageQueueUrl) throw new Error('STAGE_QUEUE_URL env var is not set');
+
+  for (const record of event.Records) {
+    await routeStage(record.body, pool, client, bucket, stageQueueUrl);
+  }
+};

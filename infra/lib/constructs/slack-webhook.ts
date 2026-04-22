@@ -167,7 +167,7 @@ export class CahSlackWebhook extends Construct {
       },
       role,
       vpc: props.vpc,
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [lambdaSg],
       environment: {
         NODE_OPTIONS: '--enable-source-maps',
