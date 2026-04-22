@@ -1,7 +1,7 @@
 # Cloud Agent Harness Architecture
 
 > Architecture documentation for the cloud-native autonomous feature delivery platform.
-> Reflects the implemented state as of Phase 4 completion (2026-04-17).
+> Reflects the implemented state as of 2026-04-22 — Phases 1-4 complete + post-FIX-010 wiring (Slack DM approval, full token tracking, push plumbing). Phase 5 redesigns the per-stage commit flow.
 
 ---
 
@@ -34,7 +34,10 @@ The system is built in 5 phases. Phases 1-4 are complete. Phase 5 is planned.
                          WHAT COMES NEXT (Phase 5)
 ┌──────────────────────────────────────────────────────────────────────┐
 │                                                                      │
-│  Phase 5:  Observability dashboard, CLI status queries, telemetry   │
+│  Phase 5:  Pipeline restructure — single project-level Slack         │
+│            approval, autonomous phase loop, ONE PR for the whole     │
+│            project. Resolves the "stage commits don't accumulate     │
+│            on featureBranch" gap that blocks v1 PR creation.         │
 │                                                                      │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -151,9 +154,12 @@ This traces the full lifecycle of a feature request from user input to delivered
           │                                                             │
           │  ┌──────────────────────────────────────────────────────┐   │
           │  │  EXECUTE                                             │   │
-          │  │  • For each plan (sequentially):                     │   │
+          │  │  • Single sandbox dispatch per phase:                │   │
           │  │    ┌─────────────────────────────────────────┐       │   │
           │  │    │ Sandbox: clone repo, download .planning/│       │   │
+          │  │    │ configureGitAuth + createTaskBranch     │       │   │
+          │  │    │   (CAH_FEATURE_BRANCH + CAH_GITHUB_TOKEN│       │   │
+          │  │    │    forwarded by sandbox-task)           │       │   │
           │  │    │ SDK PhaseRunner.run():                  │       │   │
           │  │    │   Step 3.5: Plan Check                  │       │   │
           │  │    │   Step 3.7: Auto-Decide ◄── NEW        │       │   │
@@ -161,10 +167,13 @@ This traces the full lifecycle of a feature request from user input to delivered
           │  │    │     └─ High-risk → Slack escalation ────┼──►    │   │
           │  │    │   Step 4: Execute tasks                 │  Slack │   │
           │  │    │   Step 5: Verify                        │  (may  │   │
-          │  │    │ Upload artifacts → S3, git push         │  pause)│   │
+          │  │    │ Upload artifacts → S3                   │  pause)│   │
+          │  │    │ commitAndPush → cah/{runId}/{phase}-... │       │   │
           │  │    └─────────────────────────────────────────┘       │   │
-          │  │  • Skip completed plans (idempotency keys)           │   │
-          │  │  • Write checkpoint per plan                         │   │
+          │  │  • Token usage + model recorded per agent_run        │   │
+          │  │  • Note v1 limitation: commits land on per-stage     │   │
+          │  │    task branches, NOT on featureBranch. PR stage     │   │
+          │  │    therefore opens an empty diff. Phase 5 fixes.     │   │
           │  └──────────────────────┬───────────────────────────────┘   │
           │                         │ SQS                               │
           │                         ▼                                   │
@@ -178,8 +187,11 @@ This traces the full lifecycle of a feature request from user input to delivered
           │                         ▼                                   │
           │  ┌──────────────────────────────────────────────────────┐   │
           │  │  PR                                                  │   │
-          │  │  • Merge task branches → feature branch              │   │
-          │  │  • Create GitHub PR: [CAH] {featureDescription}      │   │
+          │  │  • Create GitHub PR: featureBranch → base            │   │
+          │  │    (NB: merge-executor.ts exists but is unwired —   │   │
+          │  │    nothing rolls task branches into featureBranch    │   │
+          │  │    today. PR currently 422s with                    │   │
+          │  │    "No commits between …". Phase 5 owns the fix.)    │   │
           │  │  • Attach PR URL to Linear ticket                    │   │
           │  │  • Mark Linear ticket → 'done'                       │   │
           │  │  • track('pr_created')                               │   │
@@ -247,13 +259,13 @@ The pipeline is a 7-stage linear progression orchestrated by a Lambda function t
 
 | Stage | Type | What it does |
 |-------|------|-------------|
-| **Intake** | Inline | Creates pipeline_run row, feature branch, Linear parent ticket; downloads planning artifacts when planningPrefix present (Phase 4) |
+| **Intake** | Inline | Creates pipeline_run row (seeds `phase_current` from incoming context), feature branch, Linear parent ticket; downloads planning artifacts when planningPrefix present (Phase 4) |
 | **Research** | Daytona agent | Researches the feature domain |
 | **Plan** | Daytona agent | Creates execution plans |
-| **Approve** | Inline | Sends Block Kit approve/reject to Slack, writes pending approval to Postgres, returns `paused` (webhook owns resume) |
-| **Execute** | Daytona agent | Iterates plans sequentially, skips completed (resume) |
+| **Approve** | Inline | Sends Block Kit approve/reject to Slack DM (channel = `SLACK_APPROVAL_CHANNEL`, U-prefixed user ID for DM or C-prefixed channel ID), writes pending approval to Postgres, returns `paused` (webhook owns resume) |
+| **Execute** | Daytona agent | Single sandbox dispatch per phase; entrypoint creates a task branch, calls `gsd.runPhase()`, commits + pushes |
 | **Verify** | Daytona agent | Validates execution output |
-| **PR** | Inline | Creates GitHub PR from feature branch, links PR to Linear ticket, marks ticket done |
+| **PR** | Inline | Creates GitHub PR from feature branch, links PR to Linear ticket, marks ticket done. v1: fails because task-branch commits don't accumulate on featureBranch (Phase 5 fix) |
 
 ### Checkpoint/Resume
 
@@ -286,17 +298,30 @@ Every agent task boundary writes a checkpoint to Postgres. If the pipeline dies 
        │  4. Write checkpoint (success or failure)
        ▼
   /harness/entrypoint.js (bundled entrypoint in Daytona sandbox)
-       │  1. Read CAH_* env vars
+       │  1. Read CAH_* env vars (CAH_RUN_ID, CAH_STAGE, CAH_PHASE,
+       │     CAH_PLAN, CAH_WAVE, CAH_BUCKET, CAH_REPO_URL, CAH_BRANCH,
+       │     CAH_FEATURE_BRANCH, CAH_GITHUB_TOKEN, ANTHROPIC_API_KEY,
+       │     forwarded AWS creds for S3 access)
        │  2. Download .planning/ from S3
        │  3. loadSdk() → dynamic import('/harness/sdk/dist/index.js')
        │     (SDK is externalized so its import.meta.url-relative
        │      lookups for prompts/ and gsd-tools.cjs resolve on disk)
-       │  4. SDK dispatch by stage:
-       │     research/plan/verify → gsd.runPhase()
-       │     execute → gsd.executePlan()
-       │  5. git status --porcelain → modified files
-       │  6. Upload modified files to S3
-       │  7. Write JSON result to stdout
+       │  4. (execute only) configureGitAuth + createTaskBranch
+       │     credential helper emits both username=x-access-token and
+       │     password=$CAH_GITHUB_TOKEN; fetch refspec is explicit
+       │     '<branch>:refs/remotes/origin/<branch>' so the remote-
+       │     tracking ref is created (Daytona's clone fetches only
+       │     the cloned branch otherwise)
+       │  5. SDK dispatch (uniform across stages):
+       │     research/plan/execute/verify → gsd.runPhase(phase)
+       │     GSD's PhaseRunner picks the next pending step from STATE.md
+       │  6. Aggregate usage across result.steps[].planResults[].usage
+       │     and resolve model via loadConfig + model_profile map
+       │  7. git status --porcelain → modified files
+       │  8. Upload modified files to S3
+       │  9. (execute only) commitAndPush taskBranch
+       │ 10. Write JSON result to stdout (success, costUsd, durationMs,
+       │     artifacts, usage{4 fields}, model)
        ▼
 ```
 
@@ -588,6 +613,90 @@ Existing rows default to `'plan_approval'` for backward compatibility.
 
 ---
 
+## Phase 4 → Phase 5 Wiring (2026-04-22)
+
+The first end-to-end smoke test after Phase 4 surfaced eight gaps between the four-phase pipeline and a real working flow. All eight are now fixed and deployed; the architecture below stays intentionally close to the original Phase 4 shape so Phase 5 can replace it cleanly with the new "single project-level approval + autonomous phase loop" design.
+
+### Slack DM approval (was: stage-router missing the bot token)
+
+`pipeline-lambda.ts` now accepts `slackBotTokenSecret` + `slackApprovalChannel` props. The construct:
+
+- Grants the stage-router IAM role `secretsmanager:GetSecretValue` on the Slack bot token secret
+- Sets `SLACK_BOT_TOKEN_SECRET_ARN` and `SLACK_APPROVAL_CHANNEL` env vars
+
+The channel value is a Slack ID. A C-prefix posts to a channel; a U-prefix opens (or reuses) the bot's IM with that user. Dev currently uses `U0A6ZENN1D5` for direct DMs to the operator. Without these env vars, `handleApproveStage` failed with "SLACK_BOT_TOKEN_SECRET_ARN not set" and the SQS message DLQ'd after three retries.
+
+### Token tracking (migration 005)
+
+```sql
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS cache_read_tokens INTEGER DEFAULT 0;
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS cache_creation_tokens INTEGER DEFAULT 0;
+```
+
+`checkpoint.ts` UPDATE writes `input_tokens / output_tokens / cache_read_tokens / cache_creation_tokens / model` per agent_run. Inside the sandbox, `agent-entrypoint.ts`:
+
+- For research/plan/execute/verify: aggregates `result.steps[].planResults[].usage` because `PhaseRunnerResult` has no top-level `usage` field
+- Derives `model` from `loadConfig().model_profile` mapped via `{ balanced: 'claude-sonnet-4-6', quality: 'claude-opus-4-6', speed: 'claude-haiku-4-5' }`
+
+Verified end-to-end: an agent_run row for the smoke test shows `cache_read_tokens=658241, model=claude-sonnet-4-6`.
+
+### intake.ts seeds phase_current
+
+`pipeline_runs.phase_current` defaults to `0` in the schema. The slack-handler resume reads that column to populate `context.phaseNumber` in the post-approval SQS message. Without seeding, every execute message arrived with `phaseNumber=0` and `buildTaskId` produced `{runId}:0:execute-…:1` instead of `:1:`. Fix is one INSERT column:
+
+```sql
+INSERT INTO pipeline_runs (id, project_id, phase_current, phase_total, …)
+VALUES ($1, $2, $3, $4, …)
+```
+
+### sandbox-task forwards git context
+
+The agent-entrypoint had a `if (featureBranch && githubToken)` guard around `createTaskBranch + commitAndPush` that was always false because nothing set those env vars. `sandbox-task.ts` now:
+
+- Caches the GitHub PAT at Lambda cold start via `getGitHubToken()` (mirrors `getAnthropicApiKey`)
+- Forwards `CAH_FEATURE_BRANCH`, `CAH_GITHUB_TOKEN`, and `CAH_WAVE` to the sandbox env
+
+### createTaskBranch fetch refspec
+
+Daytona's `git.clone(repoUrl, dir, branch)` only fetches the cloned branch and leaves no `refs/remotes/origin/<other-branch>`. `git checkout origin/<featureBranch>` therefore failed with "is not a commit". Replaced bare `git fetch origin <branch>` with the explicit refspec:
+
+```
+git fetch origin <branch>:refs/remotes/origin/<branch>
+```
+
+### configureGitAuth username
+
+The credential helper emitted only `password=…`. Git's credential protocol requires both `username` and `password` lines for HTTPS push (fetch on a public repo works anonymously, which is why nothing complained until the first real push). GitHub PATs accept `x-access-token` as the username:
+
+```bash
+git config credential.helper '!f() {
+  echo "username=x-access-token";
+  echo "password=$CAH_GITHUB_TOKEN";
+}; f'
+```
+
+### execute stage simplified
+
+`stages/execute.ts` previously looped over fake plan names like `execute-01` and called `gsd.executePlan(planName)`. The SDK's `executePlan` expects a *path* to a PLAN.md file, so the call was treating `"execute-01"` as a relative path and ENOENTing immediately. Replaced with a single sandbox dispatch using planName=`execute-main`. Inside the sandbox, the entrypoint's execute case now calls `gsd.runPhase(phase)` like research/plan/verify — GSD's state machine resumes from whichever step is next per `STATE.md`.
+
+### What's still broken (now Phase 5 territory)
+
+End-to-end run `1cb91052` reaches the PR stage with all four agent_runs (`research-main`, `plan-main`, `execute-main`, `verify-main`) completed and token counts populated. The PR stage 422s with **"No commits between main and cah/.../…"**. Root cause:
+
+1. The **plan** stage's GSD agent writes `scripts/hello-e2e.txt` (the actual feature work) and uploads it to `runs/{runId}/phases/1/scripts/hello-e2e.txt` in S3. But the plan sandbox doesn't do git operations — only the execute case in the entrypoint does.
+2. The **execute** stage starts a fresh sandbox. `downloadPlanningDir` only pulls `runs/{runId}/planning/`, not `runs/{runId}/phases/…/`. The workspace is missing the file plan produced.
+3. GSD's PhaseRunner sees STATE.md saying execute is next, runs a session ($0.45 worth), but produces no diff because there's no remaining task once you account for what plan already did.
+4. `commitAndPush` runs anyway, pushes an empty taskBranch (same SHA as featureBranch). PR stage tries `featureBranch → main` and fails with "no commits between".
+
+Phase 5 already calls for two changes that resolve this:
+
+- **Per-stage commit on the same featureBranch** (no per-stage taskBranch, no merge step)
+- **Workspace re-hydration from S3 before each sandbox** so each phase sees prior phases' work
+
+These belong with Phase 5's broader autonomous-loop design, not as patches to the current shape.
+
+---
+
 ## Phase 1: What Was Built
 
 ### AWS Infrastructure (`infra/`)
@@ -769,6 +878,10 @@ pipeline_runs additions (migrate-002, migrate-003):
   repo_url          TEXT
   branch            TEXT
   feature_description TEXT
+
+agent_runs additions (migrate-005):
+  cache_read_tokens     INTEGER DEFAULT 0  (cache-read input tokens)
+  cache_creation_tokens INTEGER DEFAULT 0  (cache-write input tokens)
 ```
 
 Indexes: `idx_approvals_type ON approvals(approval_type)`.
@@ -987,9 +1100,13 @@ The image.build-* docker steps stream via `onLogs`; total publish is ~60-75s col
 
 | Component | Phase | Status | Purpose |
 |-----------|-------|--------|---------|
+| Stage commit accumulation on featureBranch | 5 | Not started | Make per-stage sandbox commits land on the same branch the PR opens from. Resolves the "no commits between" PR failure. |
+| Workspace re-hydration between sandboxes | 5 | Not started | downloadPlanningDir extends to pull all `runs/{runId}/` artifacts so each sandbox sees prior work, not just `.planning/` |
+| Single project-level approval flow | 5 | Not started | Replace per-phase plan approval with one project-level approval after roadmap synthesis |
+| Phase-loop driver in stage router | 5 | Not started | After phase-verify, decide "more phases?" → re-enter or proceed to PR |
+| Project research + roadmap synthesis stages | 5 | Not started | Replace single research/plan stages with project-level discovery before the approval gate |
 | PostHog run dashboard | 5 | Not started | Current phase, cumulative cost, completion status for any pipeline run |
 | CLI status queries | 5 | Not started | `cah status`, `cah runs`, `cah run <id>` |
-| Per-agent telemetry | 5 | Not started | Tool calls, output references, token usage in Postgres |
 
 ### Deferred to v2
 
@@ -1004,4 +1121,4 @@ The image.build-* docker steps stream via `onLogs`; total publish is ~60-75s col
 
 ---
 
-*Last updated: 2026-04-22 (Phases 1-4 complete, Daytona snapshot live, Phase 5 planned)*
+*Last updated: 2026-04-22 (Phases 1-4 complete, Phase 4 → 5 wiring landed, Daytona snapshot live, Phase 5 in design)*

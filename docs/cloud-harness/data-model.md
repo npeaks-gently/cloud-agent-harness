@@ -1,8 +1,8 @@
 # Data Model
 
-> Reflects the implemented state as of Phase 3 completion (2026-04-17).
+> Reflects the implemented state as of 2026-04-22 (migrations 001–005 applied).
 
-Cloud Agent Harness uses RDS Postgres 16. The base schema is created by `scripts/init-db-schema.sql`; subsequent migrations extend it. The `approvals` table and integration columns on `pipeline_runs` are created by `scripts/migrate-003-approvals.sql`.
+Cloud Agent Harness uses RDS Postgres 16. The base schema is created by `scripts/init-db-schema.sql`; subsequent migrations extend it. Phase 3 added the `approvals` table and integration columns on `pipeline_runs`. Migration 004 added `approval_type` to discriminate plan approvals from risk escalations. Migration 005 added cache-token columns on `agent_runs` to fully account for Anthropic prompt-cache pricing.
 
 ## Tables
 
@@ -41,9 +41,11 @@ One row per agent task within a pipeline. Each stage may spawn one or more agent
 | `status` | TEXT | `'pending'` | Task state: `pending`, `running`, `completed`, `failed` |
 | `task_key` | TEXT | | Deterministic ID for idempotent upsert (format: `{runId}:{phase}:{plan}:{wave}`) |
 | `session_id` | TEXT | | Agent session identifier from the SDK |
-| `model` | TEXT | | Claude model used (e.g., `claude-sonnet-4-20250514`) |
-| `input_tokens` | INTEGER | `0` | Input token count |
+| `model` | TEXT | | Claude model used (e.g., `claude-sonnet-4-6`); resolved in the entrypoint via `loadConfig` + `model_profile` map |
+| `input_tokens` | INTEGER | `0` | Non-cached input token count |
 | `output_tokens` | INTEGER | `0` | Output token count |
+| `cache_read_tokens` | INTEGER | `0` | Input tokens served from prompt cache (migration 005) |
+| `cache_creation_tokens` | INTEGER | `0` | Input tokens written to prompt cache (migration 005) |
 | `cost_usd` | NUMERIC(10,6) | `0` | Execution cost in USD |
 | `duration_ms` | INTEGER | `0` | Task execution duration |
 | `error_message` | TEXT | | Error details on failure |
@@ -69,7 +71,8 @@ One row per approval request. Created when the pipeline hits the approve stage; 
 | `pipeline_run_id` | UUID | | Foreign key to `pipeline_runs.id` |
 | `token` | UUID | `gen_random_uuid()` | Unique token embedded in Slack button payload (122 bits of entropy) |
 | `status` | TEXT | `'pending'` | Approval state: `pending`, `approved`, `rejected` |
-| `slack_channel` | TEXT | | Slack channel where the approval message was sent |
+| `approval_type` | TEXT | `'plan_approval'` | Discriminator: `plan_approval` advances to next stage; `risk_escalation` re-enters current stage (migration 004) |
+| `slack_channel` | TEXT | | Slack channel or U-prefixed user ID for DM where the approval message was sent |
 | `slack_message_ts` | TEXT | | Slack message timestamp (for updating the message after resolution) |
 | `requested_by` | TEXT | | Pipeline context: who/what triggered the run |
 | `resolved_by` | TEXT | | Slack username of the person who approved/rejected |
@@ -86,6 +89,7 @@ One row per approval request. Created when the pipeline hits the approve stage; 
 | `idx_pipeline_runs_status` | `pipeline_runs` | `status` | B-tree | Find active/completed runs |
 | `idx_approvals_token` | `approvals` | `token` | B-tree | Token lookup from Slack webhook (Phase 3) |
 | `idx_approvals_pipeline_run` | `approvals` | `pipeline_run_id` | B-tree | Find approvals for a pipeline run (Phase 3) |
+| `idx_approvals_type` | `approvals` | `approval_type` | B-tree | Filter by approval type for routing (migration 004) |
 
 ## Entity Relationship Diagram
 
@@ -124,13 +128,13 @@ intake -> research -> plan -> approve -> execute -> verify -> pr -> completed
 
 | Stage | What happens |
 |-------|-------------|
-| `intake` | Creates `pipeline_runs` row, feature branch (Phase 3), Linear parent ticket (Phase 3) |
-| `research` | Spawns research agent(s) in Daytona sandbox |
+| `intake` | Creates `pipeline_runs` row (seeds `phase_current` from incoming context), feature branch (Phase 3), Linear parent ticket (Phase 3) |
+| `research` | Spawns research agent in Daytona sandbox |
 | `plan` | Spawns planning agent to create execution plans |
-| `approve` | Sends Block Kit message to Slack, writes `pending` approval row, returns `paused` (Phase 3) |
-| `execute` | Spawns executor agents — one per plan/wave, sequential |
+| `approve` | Sends Block Kit message to Slack DM (or channel), writes `pending` approval row, returns `paused` (Phase 3) |
+| `execute` | Single sandbox dispatch per phase; entrypoint creates a task branch, runs `gsd.runPhase()`, commits + pushes |
 | `verify` | Spawns verifier agent to check execution results |
-| `pr` | Merges task branches, opens GitHub PR, links to Linear ticket (Phase 3) |
+| `pr` | Opens GitHub PR `featureBranch → base`, links to Linear ticket (v1: fails when no commits accumulated on featureBranch — Phase 5 fix) |
 | `completed` | Terminal state — pipeline finished successfully |
 
 Stage transitions are managed by the stage router (`src/cloud/pipeline/stage-router.ts`), which receives SQS messages and dispatches to the appropriate handler. The router treats `paused` as a terminal state for the approve stage — the Slack webhook Lambda owns pipeline resumption via SQS.
@@ -196,6 +200,8 @@ Key properties:
 | Base schema | `scripts/init-db-schema.sql` | Creates `pipeline_runs` and `agent_runs` tables with indexes and `updated_at` trigger |
 | 002 | `scripts/migrate-002-idempotency.sql` | Adds `task_key` (with unique index), `current_stage`, `repo_url`, `branch`, `feature_description` |
 | 003 | `scripts/migrate-003-approvals.sql` | Creates `approvals` table with indexes; adds `feature_branch` and `linear_parent_ticket_id` to `pipeline_runs` (Phase 3) |
+| 004 | `scripts/migrate-004-approval-type.sql` | Adds `approval_type` to `approvals` (default `'plan_approval'`) and `idx_approvals_type` (Phase 4) |
+| 005 | `scripts/migrate-005-token-tracking.sql` | Adds `cache_read_tokens` and `cache_creation_tokens` to `agent_runs` for full Anthropic prompt-cache accounting |
 
 Run migrations in order after CDK deploy:
 
@@ -204,6 +210,8 @@ source infra/.env
 psql "$DATABASE_URL" -f scripts/init-db-schema.sql
 psql "$DATABASE_URL" -f scripts/migrate-002-idempotency.sql
 psql "$DATABASE_URL" -f scripts/migrate-003-approvals.sql
+npx tsx scripts/apply-migration-004.ts   # uses Secrets Manager for the connection string
+npx tsx scripts/apply-migration-005.ts
 ```
 
 All migrations use `IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS` and are safe to run repeatedly.
