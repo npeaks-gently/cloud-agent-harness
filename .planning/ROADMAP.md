@@ -13,9 +13,9 @@ This roadmap transforms the local GSD harness into a cloud-native autonomous fea
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: AWS Foundation & Agent Runtime** - Provision AWS infrastructure via CDK and validate Daytona workspace lifecycle for agent execution (completed 2026-04-16)
-- [ ] **Phase 2: Pipeline Orchestration & State Management** - Lambda+SQS pipeline with checkpoint/resume and storage abstraction for agent pull/push
-- [ ] **Phase 3: Integrations** - Slack approval workflow, Git/PR delivery, Linear tracking, and PostHog event instrumentation
-- [ ] **Phase 4: Headless Pipeline** - Replace interactive questioning with LLM auto-decisions and enable fully autonomous pipeline execution
+- [x] **Phase 2: Pipeline Orchestration & State Management** - Lambda+SQS pipeline with checkpoint/resume and storage abstraction for agent pull/push (completed 2026-04-16)
+- [x] **Phase 3: Integrations** - Slack approval workflow, Git/PR delivery, Linear tracking, and PostHog event instrumentation (completed 2026-04-16)
+- [x] **Phase 4: Headless Pipeline** - Replace interactive questioning with LLM auto-decisions and enable fully autonomous pipeline execution (completed 2026-04-17)
 - [ ] **Phase 5: Pipeline Restructure** - Project-level research + roadmap synthesis, single Slack approval, autonomous phase loop, and one-PR commit accumulation
 - [ ] **Phase 6: Observability & CLI** - PostHog-based run tracking, CLI status queries, and Postgres-backed agent session telemetry
 
@@ -128,8 +128,8 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. AWS Foundation & Agent Runtime | 3/3 | Complete    | 2026-04-16 |
-| 2. Pipeline Orchestration & State Management | 0/5 | Not started | - |
-| 3. Integrations | 0/5 | Not started | - |
-| 4. Headless Pipeline | 0/3 | Not started | - |
+| 2. Pipeline Orchestration & State Management | 5/5 | Complete    | 2026-04-16 |
+| 3. Integrations | 6/6 | Complete    | 2026-04-16 |
+| 4. Headless Pipeline | 3/3 | Complete    | 2026-04-17 |
 | 5. Pipeline Restructure | 0/TBD | Not started | - |
 | 6. Observability & CLI | 0/TBD | Not started | - |
