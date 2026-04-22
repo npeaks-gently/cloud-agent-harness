@@ -234,6 +234,26 @@ export async function main(): Promise<void> {
       const result = await gsd.runPhase(phase);
       success = result.success;
       costUsd = result.totalCostUsd ?? 0;
+      if (!success) {
+        // Surface the per-step failure detail to stderr so the orchestrator
+        // can capture it. The aggregate result.success collapses N step
+        // outcomes into a single bool, dropping the actual reason.
+        const steps = (result as { steps?: Array<{ step: string; success: boolean; error?: string; durationMs?: number }> }).steps ?? [];
+        const failedSteps = steps.filter((s) => !s.success);
+        console.error(JSON.stringify({
+          level: 'error',
+          message: 'gsd.runPhase returned failure',
+          phase,
+          stage,
+          totalDurationMs: (result as { totalDurationMs?: number }).totalDurationMs,
+          failedSteps: failedSteps.map((s) => ({
+            step: s.step,
+            durationMs: s.durationMs,
+            error: s.error,
+          })),
+          allStepStatuses: steps.map((s) => `${s.step}:${s.success ? 'ok' : 'fail'}`),
+        }));
+      }
       break;
     }
     case 'execute': {

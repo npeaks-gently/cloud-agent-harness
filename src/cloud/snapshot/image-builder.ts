@@ -45,6 +45,24 @@ export function buildHarnessImage(): Image {
     .addLocalFile('./package.json', '/harness/package.json')
     .addLocalFile('./package-lock.json', '/harness/package-lock.json')
     .runCommands('cd /harness && npm ci --production')
+    // The claude-agent-sdk on Linux probes for a musl variant first
+    // (linux-{arch}-musl) and falls back to the glibc variant. Both are
+    // installed by `npm ci`, but the musl binary can't execute on Debian's
+    // glibc, so the SDK picks musl, fails to spawn, and reports
+    // "Claude Code native binary not found." Remove the musl packages so
+    // the SDK's fallback picks the working glibc binary.
+    .runCommands(
+      'rm -rf /harness/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl /harness/node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64-musl',
+    )
     .addLocalFile('./src/cloud/entrypoint/agent-entrypoint.js', '/harness/entrypoint.js')
-    .env({ NODE_ENV: 'production' });
+    .env({ NODE_ENV: 'production' })
+    // Claude Code refuses --allow-dangerously-skip-permissions when running
+    // as root (security check). The node:22-slim base image has a pre-baked
+    // `node` user; switch to it for the running container. Pre-create the
+    // Daytona workspace dir + the node user's home/.claude dir so git
+    // clones and Claude Code state writes succeed as the non-root user.
+    .dockerfileCommands([
+      'RUN mkdir -p /home/daytona/workspace /home/node/.claude /home/node/.cache && chown -R node:node /harness /home/daytona /home/node',
+      'USER node',
+    ]);
 }
